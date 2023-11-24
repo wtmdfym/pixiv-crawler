@@ -6,21 +6,21 @@ import re
 import threading
 import time
 import zipfile
-import requests
-from PIL import Image
+import aiohttp
+import asyncio
+import http.cookies
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-proxie = ''
 
 
 class Downloader:
     """
-    下载图片
-    TODO 下载小说
+    下载图片(下载小说?->future)
     """
+    __proxies = ''
+    __event = threading.Event()
 
     def __init__(
-        self, host_path, cookies, download_type, download_number, backup_collection, logger, progress_signal
+        self, host_path, cookies, download_type, semaphore, backup_collection, logger, progress_signal
     ) -> None:
         self.cookies = cookies
         self.host_path = host_path
@@ -29,12 +29,11 @@ class Downloader:
         self.logger = logger
         self.progress_signal = progress_signal
         self.headers = {
-            "User-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188",
+            "User-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188",
             "referer": "https://www.pixiv.net/"}
-        self.pool = ThreadPoolExecutor(max_workers=download_number)
-        self.event = threading.Event()
-        self.event.set()
+        self.timeout = aiohttp.ClientTimeout(total=5)
+        self.semaphore = asyncio.Semaphore(semaphore)
+        self.__event.set()
 
     def start_work_download(self, id):
         """
@@ -72,7 +71,7 @@ class Downloader:
             json.dump(infos, f, ensure_ascii=False, indent=4)
 
         for future in as_completed(tasks):
-            if not self.event.is_set():
+            if not self.__event.is_set():
                 return
             future.result()
         self.pool.shutdown()
@@ -83,11 +82,6 @@ class Downloader:
         从pixiv获取含标签的图片下载
         """
 
-    def start_user_download(self):
-        """
-        从mongodb中获取图片url并放进线程池
-        """
-
     def start_following_download(self):
         """
         从mongodb中获取图片url并放进线程池
@@ -95,7 +89,7 @@ class Downloader:
         self.logger.info("开始下载\n由于需要读取数据库信息并检测是否下载,所以可能等待较长时间")
         tasks = []
         for doc in self.backup_collection.find({"id": {"$exists": True}}):
-            if not self.event.is_set():
+            if not self.__event.is_set():
                 return
             tasks.clear()
             if doc.get("failcode"):
@@ -128,7 +122,7 @@ class Downloader:
                     tasks.append(self.pool.submit(self.download_image, info))
 
             for future in as_completed(tasks):
-                if not self.event.is_set():
+                if not self.__event.is_set():
                     return
                 future.result()
         self.pool.shutdown()
@@ -175,7 +169,7 @@ class Downloader:
                                             response.status_code)
                     f = open(path, "wb")
                     for chunk in response.iter_content(1024):
-                        if not self.event.is_set():
+                        if not self.__event.is_set():
                             f.close()
                             os.remove(path)
                             return
@@ -192,7 +186,53 @@ class Downloader:
             return response.status_code
         f = open(path, "wb")
         for chunk in response.iter_content(1024):
-            if not self.event.is_set():
+            if not self.__event.is_set():
+                f.close()
+                os.remove(path)
+                return
+            f.write(chunk)
+            f.flush()
+        f.close()
+
+    async def stream_download_async(self, session: aiohttp.ClientSession, request_info: tuple, path: str):
+        """
+        流式接收数据并写入文件
+        """
+        url, headers = request_info
+        a = 1
+        while a <= 3:
+            try:
+                response = await session.get(
+                    url,
+                    headers=headers,
+                    proxy=self.__proxies,
+                )
+            except Exception:
+                if a == 3:
+                    return 1
+                self.logger.warning("下载失败!")
+                self.logger.info("自动重试---%d/3" % a)
+                time.sleep(3)
+                a += 1
+                continue
+            finally:
+                if response.status != 200:
+                    self.logger.warning("下载失败!---响应状态码:%d" %
+                                        response.status_code)
+                    self.logger.info("自动重试---%d/3" % a)
+                    a += 1
+                    time.sleep(1)
+                    continue
+                else:
+                    break
+        if a == 3:
+            self.logger.info("自动重试失败!")
+            # 错误记录，但感觉没什么用
+            # self.failure_recoder_mongo(id)
+            return response.status
+        f = open(path, "wb")
+        async for chunk in response.content.iter_chunked(1024):
+            if not self.__event.is_set():
                 f.close()
                 os.remove(path)
                 return
@@ -202,7 +242,7 @@ class Downloader:
 
     def download_image(self, info):
         """从队列中获取数据并下载图片"""
-        if not self.event.is_set():
+        if not self.__event.is_set():
             return
         start_time = time.time()  # 程序开始时间
         # print('获取数据%s'%(info))
@@ -259,7 +299,7 @@ class Downloader:
                 else:
                     self.logger.error("下载图片%s失败" % id)
                     return
-        if not self.event.is_set():
+        if not self.__event.is_set():
             return
         end_time = time.time()  # 程序结束时间
         run_time = end_time - start_time  # 程序的运行时间，单位为秒
@@ -273,7 +313,7 @@ class Downloader:
         pass
 
     def stop_downloading(self):
-        self.event.clear()
+        self.__event.clear()
         time.sleep(0.5)
         self.pool.shutdown(wait=True, cancel_futures=True)
         self.logger.info("停止下载")
