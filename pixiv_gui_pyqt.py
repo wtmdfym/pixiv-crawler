@@ -8,6 +8,7 @@ import pymongo
 import asyncio
 import motor.motor_asyncio
 import pixiv_pyqt_tools
+import infofetcher
 from PyQt6.QtCore import (
     QCoreApplication,
     QMetaObject,
@@ -636,7 +637,7 @@ class AsyncDownloadThreadingManger(QThread):
             # 获取关注的作者
             if self.ifstop:
                 return
-            self.followings_recorder = pixiv_pyqt_tools.FollowingsRecorder(
+            self.followings_recorder = infofetcher.FollowingsRecorder(
                 config_dict["cookies"], db, logger, self.progress_signal
             )
             success = self.followings_recorder.following_recorder()
@@ -647,7 +648,7 @@ class AsyncDownloadThreadingManger(QThread):
             # 获取关注的作者的信息
             if self.ifstop:
                 return
-            self.info_getter = pixiv_pyqt_tools.InfoGetter(
+            self.info_getter = infofetcher.InfoGetter(
                 config_dict["cookies"],
                 config_dict["download_type"],
                 asyncdb,
