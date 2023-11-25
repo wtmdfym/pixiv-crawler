@@ -9,6 +9,7 @@ import asyncio
 import motor.motor_asyncio
 import pixiv_pyqt_tools
 import infofetcher
+import downloader
 from PyQt6.QtCore import (
     QCoreApplication,
     QMetaObject,
@@ -266,26 +267,26 @@ class MainWindow(QMainWindow):
         self.tabWidget.setObjectName("tabWidget")
         # 初始化MainTab
         self.tab = MainTab()
-        self.tab.setObjectName("tab")
+        self.tab.setObjectName("MainTab")
         self.tabWidget.addTab(self.tab, "")
         # 初始化SearchTab
         self.tab_1 = SearchTab()
-        self.tab_1.setObjectName("tab_1")
+        self.tab_1.setObjectName("SearchTab")
         self.tabWidget.addTab(self.tab_1, "")
         # 初始化TagsTab
         self.tab_2 = TagsTab(
             changetab=self.tabWidget.setCurrentIndex,
             settext=self.tab_1.searchEdit.setText,
         )
-        self.tab_2.setObjectName("tab_2")
+        self.tab_2.setObjectName("TagsTab")
         self.tabWidget.addTab(self.tab_2, "")
         # 初始化UserTab
         self.tab_3 = UserTab()
-        self.tab_3.setObjectName("tab_3")
+        self.tab_3.setObjectName("UserTab")
         self.tabWidget.addTab(self.tab_3, "")
         # 初始化ConfigsTab
         self.tab_4 = ConfigTab(self.reloadUI)
-        self.tab_4.setObjectName("tab_4")
+        self.tab_4.setObjectName("ConfigsTab")
         self.tabWidget.addTab(self.tab_4, "")
         # 设置主窗口
         self.setCentralWidget(self.centralwidget)
@@ -306,7 +307,7 @@ class MainWindow(QMainWindow):
         QMetaObject.connectSlotsByName(self)
 
         """
-        # 设置tab控件焦点
+        # 设置控件焦点切换顺序
         self.setTabOrder(self.tabWidget, self.inpuEdit)
         self.setTabOrder(self.inpuEdit, self.startButton)
         self.setTabOrder(self.startButton, self.radioButton)
@@ -630,6 +631,8 @@ class AsyncDownloadThreadingManger(QThread):
 
     def run(self):
         global config_dict
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
         newtime = time.strftime("%Y%m%d%H%M%S")
         if pixiv_pyqt_tools.Tools.compare_datetime(
             config_dict["last_record_time"], newtime
@@ -656,7 +659,7 @@ class AsyncDownloadThreadingManger(QThread):
                 logger,
                 semaphore=2
             )
-            success = asyncio.run(self.info_getter.start_get_info_async())
+            success = loop.run_until_complete(asyncio.create_task(self.info_getter.start_get_info_async()))
             if success:
                 config_dict.update({"last_record_time": newtime})
                 pixiv_pyqt_tools.ConfigSetter.set_config(
@@ -664,22 +667,21 @@ class AsyncDownloadThreadingManger(QThread):
             del self.info_getter
         else:
             logger.info("最近已获取,跳过")
-        """
         # 下载作品
         if self.ifstop:
             return
-        self.downloader = pixiv_pyqt_tools.Downloader(
+        self.downloader = downloader.ThreadpoolDownloader(
             config_dict["save_path"],
             config_dict["cookies"],
             config_dict["download_type"],
             config_dict["download_thread_number"],
             backup_collection,
             logger,
-            self.progress_signal,
+            self.progress_signal
         )
         self.downloader.start_following_download()
+        # loop.run_until_complete(asyncio.ensure_future(self.downloader.start_following_download()))
         del self.downloader
-        """
         self.break_signal.emit()
 
     def stop(self):
@@ -1105,20 +1107,22 @@ class ImageTableWidget(QTableWidget):
         title = result.get("title")
         userid = result.get("userId")
         username = result.get("username")
+        tags = result.get("tags")
         description = result.get("description")
         self.img_url = "https://www.pixiv.net/artworks/" + str(id)
         self.img_path = result.get("relative_path")[0]
 
-        infos = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nDescription:\n{}"
+        infos = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:{}\nDescription:\n{}"
         self.callback(
-            infos.format(id, type, title, userid, username, description),
+            infos.format(id, type, title, userid, username, tags, description),
             self.img_url,
             self.img_path,
         )
 
     def change_page(self, page):
         self.page = page
-        self.clearSelection()
+        # 清除选中
+        # self.clearSelection()
         self.update_image_new()
 
     def resizeEvent(self, e) -> None:

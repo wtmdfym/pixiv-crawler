@@ -493,8 +493,8 @@ class InfoGetter:
             )
             error_count = 0
             while 1:
-                ids_json = 0
                 try:
+                    ids_json = 0
                     res = await session.get(
                         xhr_url,
                         headers=self.headers,
@@ -502,7 +502,11 @@ class InfoGetter:
                     ids_json = await res.json()
                 except asyncio.exceptions.TimeoutError:
                     self.logger.warning("连接超时!  请检查你的网络!")
-                    return None
+                    error_count += 1
+                    if error_count == 4:
+                        self.logger.info("自动重试失败!")
+                        return None
+                    self.logger.info("自动重试---%d/3" % error_count)
                 except Exception:
                     print(await res.text())
                     self.logger.error("获取ID失败")

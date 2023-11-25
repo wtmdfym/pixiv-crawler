@@ -1,35 +1,41 @@
 # -*-coding:utf-8-*-
 import aiohttp
 import asyncio
-import threading
 import requests
 import re
 import json
 import html
 import time
 
+import threading
 
-class InfoGetter:
+import http.cookies
+http.cookies._is_legal_key = lambda _: True
+
+
+class InfoFetcher:
     """
-    获取作品信息
+    Get information about works
+
+    Use asyncio and aiohttp
 
     Attributes:
-        __version: Pixiv请求链接中带有的参数(用处暂时未知)
-        __proxies:用aiohttp发送http请求时用的代理(可选)
-        __event:The stop event
-        db:Database of MongoDB
+        __version: Parameters in the Pixiv request link (usefulness unknown)
+        __proxies: Proxy to use aiohttp to send HTTP requests (optional)
+        __event: The stop event
+        db: The database connection of MongoDB(async)
         cookies:The cookies when a request is sent to pixiv
-        download_type:
-        backup_collection:
-        logger:The instantiated object of logging.Logger
-        progress_signal:The pyqtSignal of QProgressBar
-        headers:The headers when sending a request to pixiv
-        timeout:
-        semaphore:
+        download_type: The type of work to be downloaded
+        backup_collection: A collection of backup of info(async)
+        logger: The instantiated object of logging.Logger
+        progress_signal: The pyqtSignal of QProgressBar
+        headers: The headers when sending a HTTP request to pixiv
+        timeout: The timeout period for aiohttp requests
+        semaphore: The concurrent semaphore of asyncio
     """
     __version = ''
-    __proxies = ''
-    __event = threading.Event()
+    __proxies = 'http://localhost:1111'
+    __event = asyncio.Event()
 
     def __init__(self, cookies: str, download_type: dict, db, backup_collection, logger,
                  semaphore: int = None, progress_signal=None) -> None:
@@ -48,6 +54,10 @@ class InfoGetter:
         self.__event.set()
 
     async def start_get_info_async(self) -> bool | None:
+        """
+        Raises:
+            Exception:
+        """
         finish = await self.record_infos_async()
         if finish:
             success = await self.mongoDB_auto_backup_async()
@@ -90,6 +100,7 @@ class InfoGetter:
                         if ids:
                             # print("ok")
                             await self.record_info_mongodb_async(ids=ids, session=session, collection=self.db[name])
+                await session.close()
         self.logger.info("获取所有作者的作品信息完成")
         return True
 
@@ -130,7 +141,11 @@ class InfoGetter:
                     ids_json = await res.json()
                 except asyncio.exceptions.TimeoutError:
                     self.logger.warning("连接超时!  请检查你的网络!")
-                    return None
+                    error_count += 1
+                    if error_count == 4:
+                        self.logger.info("自动重试失败!")
+                        return None
+                    self.logger.info("自动重试---%d/3" % error_count)
                 except Exception:
                     print(await res.text())
                     self.logger.error("获取ID失败")
@@ -140,7 +155,7 @@ class InfoGetter:
                         return None
                     self.logger.info("自动重试---%d/3" % error_count)
                 finally:
-                    if ids_json is not None:
+                    if ids_json is not None and ids_json != 0:
                         if error_count:
                             self.logger.info("自动重试成功!")
                         break
@@ -207,8 +222,45 @@ class InfoGetter:
 
     async def get_info_async(self, url: str, id: str, session: aiohttp.ClientSession) -> dict:
         """
-        获取图片详情信息
-        illust_info:如果要爬其他类型的作品时不一样!
+        Get detailed information about a work
+        TODO illust_info:It's not the same if you want to climb other types of works!
+
+        Args:
+            url(str): Request link
+            id(str): The ID of the work
+            session(aiohttp.ClientSession): Connection session with pixiv
+
+        Returns:
+
+            A dictionary of work information. Include the ID, title, description,
+            tags, download link of the original image (if it is an image), author ID,
+            author's name, and relative storage path. For example:
+
+            {"id": 100774433,
+                "title": "夏生まれ",
+                "description": "らむねちゃん応援してます(๑╹ᆺ╹)",
+                "tags": {
+                    "バーチャルYouTuber": "虚拟主播",
+                    "ぶいすぽっ!": "Virtual eSports Project",
+                    "白波らむね": "Shiranami Ramune",
+                    "可愛い": "可爱",
+                    "夏": "夏天",
+                    "海": "sea",
+                    "女の子": "女孩子",
+                    "青髪": None
+                },
+                "original_url": [
+                    "https://i.pximg.net/img-original/img/2022/08/26/19/00/13/100774433_p0.png"
+                ],
+                "userId": "9155411",
+                "username": "rucaco/るかこ",
+                "relative_path": [
+                    "picture/9155411/100774433_p0.png"
+                ]
+            }
+
+        Raises:
+            Exception: The parsing method is incorrect
         """
         if not self.__event.is_set():
             return
@@ -468,7 +520,7 @@ class InfoGetter:
 
 
 class InfoGetter_old:
-    """
+    """已弃用
     获取作品信息
     """
     __version = ''

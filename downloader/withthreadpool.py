@@ -10,7 +10,7 @@ import requests
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-proxie = ''
+proxie = ''  # {'http': 'http://localhost:1111', 'https': 'http://localhost:1111'}
 
 
 class Downloader:
@@ -152,9 +152,9 @@ class Downloader:
                 url,
                 headers=headers,
                 cookies=self.cookies,
-                verify=False,
                 proxies=proxie,
                 stream=True,
+                timeout=5,
             )
         except Exception:
             self.logger.warning("下载失败!")
@@ -166,9 +166,9 @@ class Downloader:
                         url,
                         headers=headers,
                         cookies=self.cookies,
-                        verify=False,
                         proxies=proxie,
                         stream=True,
+                        timeout=5,
                     )
                     if response.status_code != 200:
                         self.logger.warning("下载失败!---响应状态码:%d" %
@@ -190,6 +190,11 @@ class Downloader:
         if response.status_code != 200:
             self.logger.warning("下载失败!---响应状态码:%d" % response.status_code)
             return response.status_code
+        '''
+        with open(path, "wb") as f:
+            f.write(response.content)
+            f.flush()
+        '''
         f = open(path, "wb")
         for chunk in response.iter_content(1024):
             if not self.event.is_set():

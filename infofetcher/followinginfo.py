@@ -4,29 +4,28 @@ import requests
 
 
 class FollowingsRecorder:
-    """
-    用于获取已关注的用户的信息
+    """Get information about users you've followed
 
 
 
     Attributes:
-        __version: Pixiv请求链接中带有的参数(用处暂时未知)
-        __proxies:用requests发送http请求时用的代理(可选)
-        __event:The stop event
-        cookies:The cookies when a request is sent to pixiv
-        db:Database of MongoDB
-        logger:The instantiated object of logging.Logger
-        progress_signal:The pyqtSignal of QProgressBar
-        headers:The headers when sending a request to pixiv
+        __version: Parameters in the Pixiv request link (usefulness unknown)
+        __proxies: Proxy to use requests to send HTTP requests (optional)
+        __event: The stop event
+        cookies: The cookies when a request is sent to pixiv
+        db: Database of MongoDB
+        logger: The instantiated object of logging.Logger
+        progress_signal: The pyqtSignal of QProgressBar
+        headers: The headers when sending a HTTP request to pixiv
     """
     __version = ''
-    __proxies = ''
+    __proxies = {'http': 'http://localhost:1111', 'https': 'http://localhost:1111'}
     __event = threading.Event()
 
     def __init__(self, cookies: dict, database, logger, progress_signal):
-        """initialize followingrecoder class
+        """Initialize followingrecoder class
 
-        初始化类变量,停止事件
+        Initialize class variables and stop event
 
         Args:
             cookies(dict):The cookies of pixiv
@@ -45,19 +44,20 @@ class FollowingsRecorder:
         self.__event.set()
 
     def following_recorder(self):
-        """获取已关注的用户的信息
+        """Get information about users you've followed
 
-            访问Pixiv获取关注的用户,然后调用__get_my_followings
-            方法获取作者信息。获取完毕后添加到MongoDB数据库中
+            Visit Pixiv to get the users you following, and then
+            call the __get_my_followings method to get the author information.
+            After the acquisition is complete, it is added to the MongoDB database
 
             Args:
                 None
 
             Returns:
-                1:函数成功执行完毕
+                1: The function has been successfully executed
 
             Raises:
-                Exception: 数据库操作失败
+                Exception: The database operation failed
         """
         self.logger.info("获取已关注的用户的信息......")
         url = "https://www.pixiv.net/ajax/user/extra?lang=zh&version={version}".format(
@@ -65,39 +65,40 @@ class FollowingsRecorder:
         )
         # self.headers.update(
         #     {"referer": "https://www.pixiv.net/users/83945559/following?p=1"})
-        try:
-            response1 = requests.get(
-                url=url,
-                headers=self.headers,
-                cookies=self.cookies,
-                proxies=self.__proxies,
-                timeout=3,
-            )
-        except requests.exceptions.ConnectionError:
-            self.logger.error("无法访问pixiv,检查你的网络连接")
-            return
-            # raise Exception('[ERROR]-----无法访问pixiv,检查你的网络连接')
-        try:
-            response = response1.json()
-        except requests.exceptions.JSONDecodeError:
-            self.logger.error("无法访问pixiv,检查你的网络连接\n%s" % response1)
-            return
-            # raise Exception('[ERROR]-----无法访问pixiv,检查你的网络连接')
-        if response.get("error"):
-            self.logger.error(
-                "请检查你的cookie是否正确\ninformation:%s\nyour cookies:%s"
-                % (response, self.cookies)
-            )
-            return
-            # raise Exception('请检查你的cookie是否正确',response)
-        if not self.__event.is_set():
-            return
-        body = response.get("body")
-        following = body.get("following")
-        following_infos = self.__get_my_followings(following)
-        if not self.__event.is_set():
-            return
-        # print(followings)
+        with requests.Session() as session:
+            try:
+                response1 = session.get(
+                    url=url,
+                    headers=self.headers,
+                    cookies=self.cookies,
+                    proxies=self.__proxies,
+                    timeout=3,
+                )
+            except requests.exceptions.ConnectionError:
+                self.logger.error("无法访问pixiv,检查你的网络连接")
+                return
+                # raise Exception('[ERROR]-----无法访问pixiv,检查你的网络连接')
+            try:
+                response = response1.json()
+            except requests.exceptions.JSONDecodeError:
+                self.logger.error("无法访问pixiv,检查你的网络连接\n%s" % response1)
+                return
+                # raise Exception('[ERROR]-----无法访问pixiv,检查你的网络连接')
+            if response.get("error"):
+                self.logger.error(
+                    "请检查你的cookie是否正确\ninformation:%s\nyour cookies:%s"
+                    % (response, self.cookies)
+                )
+                return
+                # raise Exception('请检查你的cookie是否正确',response)
+            if not self.__event.is_set():
+                return
+            body = response.get("body")
+            following = body.get("following")
+            following_infos = self.__get_my_followings(session, following)
+            # print(followings)
+            session.close()
+
         self.logger.info("开始更新数据库......")
         followings_collection = self.db["All Followings"]
         info_count = len(following_infos)
@@ -160,23 +161,18 @@ class FollowingsRecorder:
         self.logger.info("更新数据库完成")
         return 1
 
-    def __get_my_followings(self, following: int):
-        """获取用户的信息
+    def __get_my_followings(self, session: requests.Session, following: int):
+        """Get the user's information
 
-            获取用户的用户名、ID以及自我介绍
+            Get the user's username, ID, and self-introduction
 
             Args:
-                following(int):关注的用户数目
+                following(int):Number of users followed
 
             Returns:
-                一个列表,包含了关注的每个作者的用户名、ID以及自我介绍。例如:
+                A list of usernames, IDs, and self-introductions for each author you follow. For example:
 
-                [{'userId': '53184612', 'userName': '水星すい☪︎*', 'userComment': '水星すいですいつもイラストを見ていただきありがとうございます*ﾟ
-                    アイコン等のイラスト使用につきましては一言お声かけていただければ基本許可しております。
-                    (無断転載、自作発言等はお控えください)pixivでのご連絡には対応が遅れてし
-                    まうため、御手数ですがTwitterのDMでお声をかけていただけますと幸いです。Twitter→@suisei_1121
-                    pixivFANBOX→ https://www.fanbox.cc/manage/relationships今後ともよろしくお願いいたします🙇\u200d♂️'},
-                    {'userId': '75793178', 'userName': '木下林檎', 'userComment': '努力自学画画小小萌新，画风不定多变，大佬们多多关照啦~'},
+                [{'userId': '75793178', 'userName': '木下林檎', 'userComment': '努力自学画画小小萌新，画风不定多变，大佬们多多关照啦~'},
                     {'userId': '21752034', 'userName': 'Flanling', 'userComment': '連絡方法が知りたい方はピクシブまでお問い合わせください
                     原稿受付を一時停止しますContact me on pixiv to get  information.Temporarily stop accepting manuscripts
                     luoyeyingdie@gmail.com'}]
@@ -198,13 +194,29 @@ class FollowingsRecorder:
             #     {"referer": "https://www.pixiv.net/users/83945559/following?p=%d" % page})
             following_url1 = following_url.format(
                 offset=page * 24, version=self.__version)
-            response = requests.get(
-                url=following_url1,
-                headers=self.headers,
-                cookies=self.cookies,
-                proxies=self.__proxies,
-                timeout=3,
-            ).json()
+            error_count = 0
+            while 1:
+                response = 0
+                try:
+                    response = session.get(
+                        url=following_url1,
+                        headers=self.headers,
+                        cookies=self.cookies,
+                        proxies=self.__proxies,
+                        timeout=3,
+                    ).json()
+                except requests.exceptions.ConnectionError:
+                    self.logger.warning("连接超时!  请检查你的网络!")
+                    error_count += 1
+                    if error_count == 4:
+                        self.logger.info("自动重试失败!")
+                        return None
+                    self.logger.info("自动重试---%d/3" % error_count)
+                finally:
+                    if response is not None and response != 0:
+                        if error_count:
+                            self.logger.info("自动重试成功!")
+                        break
             body = response.get("body")
             users = body.get("users")
             for user in users:
@@ -220,9 +232,9 @@ class FollowingsRecorder:
         return userinfos
 
     def __rename_collection(self, name1: str, name2: str) -> None:
-        """重命名MongoDB的集合
+        """Rename the MongoDB collection
 
-        当关注的作者更改名字时重命名集合
+        Rename the collection when the author you follow changes the name
 
         Args:
             name1(str): The original name of a collection
@@ -241,9 +253,9 @@ class FollowingsRecorder:
         collection_1.drop()
 
     def stop_recording(self) -> None:
-        """停止函数运行
+        """Stop the function from running
 
-        通过 :class:`threading.Event` 发送停止事件
+        Via :class:`threading.Event` to send a stop event
 
         Args:
             None

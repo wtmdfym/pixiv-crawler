@@ -3,46 +3,60 @@ import glob
 import json
 import os
 import re
-import threading
 import time
 import zipfile
 import aiohttp
 import asyncio
+from PIL import Image
 import http.cookies
-from concurrent.futures import ThreadPoolExecutor, as_completed
+http.cookies._is_legal_key = lambda _: True
 
 
 class Downloader:
     """
-    下载图片(下载小说?->future)
-    """
-    __proxies = ''
-    __event = threading.Event()
+    下载图片
+    TODO 下载小说
 
-    def __init__(
-        self, host_path, cookies, download_type, semaphore, backup_collection, logger, progress_signal
-    ) -> None:
+    Attributes:
+        __proxies: Proxy to use aiohttp to send HTTP requests (optional)
+        __event: The stop event
+        db: The database connection of MongoDB(async)
+        cookies: The cookies when a request is sent to pixiv
+        host_path: The root path where the image to be saved
+        download_type: The type of work to be downloaded
+        backup_collection: A collection of backup of info(async)
+        logger: The instantiated object of logging.Logger
+        progress_signal: The pyqtSignal of QProgressBar
+        headers: The headers when sending a HTTP request to pixiv
+        timeout: The timeout period for aiohttp requests
+        semaphore: The concurrent semaphore of asyncio
+    """
+
+    __proxies = ''  # 'http://localhost:1111'
+    __event = asyncio.Event()
+
+    def __init__(self, host_path: str, cookies: dict, download_type: dict, semaphore: int, backup_collection, logger) -> None:
         self.cookies = cookies
         self.host_path = host_path
         self.download_type = download_type
         self.backup_collection = backup_collection
         self.logger = logger
-        self.progress_signal = progress_signal
         self.headers = {
-            "User-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188",
+            "User-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)\
+                 Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188",
             "referer": "https://www.pixiv.net/"}
         self.timeout = aiohttp.ClientTimeout(total=5)
         self.semaphore = asyncio.Semaphore(semaphore)
         self.__event.set()
 
-    def start_work_download(self, id):
+    async def start_work_download_async(self, id):
         """
         从图片url下载
         """
         print("开始下载")
         tasks = []
         import infofetcher
-        infogetter = infofetcher.InfoGetter(
+        infogetter = infofetcher.InfoGetterOld(
             self.cookies, self.download_type, None, self.backup_collection
         )
         infos = infogetter.get_info(
@@ -53,28 +67,26 @@ class Downloader:
         # 检测下载路径是否存在,不存在则创建
         if os.path.isdir(self.host_path + "works/" + id + "/") is False:
             os.makedirs(self.host_path + "works/" + id + "/")
+        async with aiohttp.ClientSession(headers=self.headers, cookies=self.cookies, timeout=self.timeout) as session:
+            for a in range(len(urls)):
+                if not self.__event.is_set():
+                    return
+                url = urls[a]
+                name = re.search(r"[0-9]+\_.*", url).group()
+                path = self.host_path + "works/" + id + "/" + name
+                relative_path.append("works/" + id + "/" + name)
+                # 检测是否已下载
+                if not os.path.isfile(path=path):
+                    info = (id, url, path)
+                    tasks.append(asyncio.create_task(
+                        self.bound_download_image_async(session, info)))
+            infos.update({"relative_path": relative_path})
+            with open(
+                "{}works/{}/info.json".format(self.host_path, id), "w", encoding="utf-8"
+            ) as f:
+                json.dump(infos, f, ensure_ascii=False, indent=4)
+            await asyncio.wait(tasks)
 
-        for a in range(len(urls)):
-            url = urls[a]
-            name = re.search(r"[0-9]+\_.*", url).group()
-            path = self.host_path + "works/" + id + "/" + name
-            relative_path.append("works/" + id + "/" + name)
-            # 检测是否已下载
-            if not os.path.isfile(path=path):
-                info = [id, url, path]
-                tasks.append(self.pool.submit(self.download_image, info))
-
-        infos.update({"relative_path": relative_path})
-        with open(
-            "{}works/{}/info.json".format(self.host_path, id), "w", encoding="utf-8"
-        ) as f:
-            json.dump(infos, f, ensure_ascii=False, indent=4)
-
-        for future in as_completed(tasks):
-            if not self.__event.is_set():
-                return
-            future.result()
-        self.pool.shutdown()
         print("下载完成")
 
     def start_tag_download(self):
@@ -82,165 +94,119 @@ class Downloader:
         从pixiv获取含标签的图片下载
         """
 
-    def start_following_download(self):
+    async def start_following_download_async(self):
         """
-        从mongodb中获取图片url并放进线程池
+        从mongodb中获取图片url并放进协程队列
         """
         self.logger.info("开始下载\n由于需要读取数据库信息并检测是否下载,所以可能等待较长时间")
         tasks = []
-        for doc in self.backup_collection.find({"id": {"$exists": True}}):
-            if not self.__event.is_set():
-                return
-            tasks.clear()
-            if doc.get("failcode"):
-                continue
-            if not self.download_type.get("get" + doc.get("type")):
-                self.logger.warning("作品%s不在下载类型%s中" %
-                                    (doc.get("id"), "get" + doc.get("type")))
-                # print(doc)
-            id = doc.get("id")
-            urls = doc.get("original_url")
-            uid = doc.get("userId")
-            paths = doc.get("relative_path")
-            if len(paths) < 1:
-                self.logger.warning("数据错误:\n%s" % str(doc))
-                continue
-            for a in range(len(urls)):
-                try:
-                    url = urls[a]
-                    path = self.host_path + paths[a]
-                except Exception:
-                    print(doc)
-                    continue
-
-                # 检测下载路径是否存在,不存在则创建
-                if os.path.isdir(self.host_path + "/picture/" + uid + "/") is False:
-                    os.makedirs(self.host_path + "/picture/" + uid + "/")
-                # 检测是否已下载
-                if not os.path.isfile(path=path):
-                    info = [id, url, path]
-                    tasks.append(self.pool.submit(self.download_image, info))
-
-            for future in as_completed(tasks):
+        async with aiohttp.ClientSession(headers=self.headers, cookies=self.cookies, timeout=self.timeout) as session:
+            async for doc in self.backup_collection.find({"id": {"$exists": True}}):
                 if not self.__event.is_set():
                     return
-                future.result()
-        self.pool.shutdown()
+                tasks.clear()
+                if doc.get("failcode"):
+                    continue
+                if not self.download_type.get("get" + doc.get("type")):
+                    self.logger.warning("作品%s不在下载类型%s中" %
+                                        (doc.get("id"), "get" + doc.get("type")))
+                    # print(doc)
+                id = doc.get("id")
+                urls = doc.get("original_url")
+                uid = doc.get("userId")
+                paths = doc.get("relative_path")
+                if len(paths) < 1:
+                    self.logger.warning("数据错误:\n%s" % str(doc))
+                    continue
+
+                for a in range(len(urls)):
+                    if not self.__event.is_set():
+                        return
+                    try:
+                        url = urls[a]
+                        path = self.host_path + paths[a]
+                    except Exception:
+                        print(doc)
+                        continue
+
+                    # 检测保存路径是否存在,不存在则创建
+                    if os.path.isdir(self.host_path + "/picture/" + uid + "/") is False:
+                        os.makedirs(self.host_path + "/picture/" + uid + "/")
+                    # 检测是否已下载
+                    if not os.path.isfile(path=path):
+                        info = (id, url, path)
+                        tasks.append(asyncio.create_task(
+                            self.bound_download_image_async(session, info)))
+                if tasks:
+                    await asyncio.gather(*tasks)
         self.logger.info("下载完成")
 
-    def invalid_image_recorder(self, id, failcode):
-        doc = self.backup_collection.find_one_and_update(
+    async def invalid_image_recorder(self, id, failcode):
+        doc = await self.backup_collection.find_one_and_update(
             {"id": id}, {"$set": {"failcode": failcode}}
         )
         if not doc:
             self.logger.error(
                 "error in record invaild image:" + id + "\n" + doc)
 
-    def stream_download(self, request_info, path):
-        """
-        流式接收数据并写入文件
-        """
-        url, headers = request_info
-        try:
-            response = requests.get(
-                url,
-                headers=headers,
-                cookies=self.cookies,
-                verify=False,
-                proxies=proxie,
-                stream=True,
-            )
-        except Exception:
-            self.logger.warning("下载失败!")
-            for a in range(1, 4):
-                self.logger.info("自动重试---%d/3" % a)
-                time.sleep(3)
-                try:
-                    response = requests.get(
-                        url,
-                        headers=headers,
-                        cookies=self.cookies,
-                        verify=False,
-                        proxies=proxie,
-                        stream=True,
-                    )
-                    if response.status_code != 200:
-                        self.logger.warning("下载失败!---响应状态码:%d" %
-                                            response.status_code)
-                    f = open(path, "wb")
-                    for chunk in response.iter_content(1024):
-                        if not self.__event.is_set():
-                            f.close()
-                            os.remove(path)
-                            return
-                        f.write(chunk)
-                        f.flush()
-                    f.close()
-                except Exception:
-                    self.logger.info("自动重试失败!")
-                    return 1
-                    # 错误记录，但感觉没什么用
-                    # if a == 3:self.failure_recoder_mongo(id)
-        if response.status_code != 200:
-            self.logger.warning("下载失败!---响应状态码:%d" % response.status_code)
-            return response.status_code
-        f = open(path, "wb")
-        for chunk in response.iter_content(1024):
-            if not self.__event.is_set():
-                f.close()
-                os.remove(path)
-                return
-            f.write(chunk)
-            f.flush()
-        f.close()
-
     async def stream_download_async(self, session: aiohttp.ClientSession, request_info: tuple, path: str):
         """
         流式接收数据并写入文件
         """
         url, headers = request_info
-        a = 1
-        while a <= 3:
+        error_count = 0
+        while 1:
             try:
+                if not self.__event.is_set():
+                    return 0
                 response = await session.get(
                     url,
                     headers=headers,
                     proxy=self.__proxies,
                 )
             except Exception:
-                if a == 3:
+                error_count += 1
+                if error_count == 4:
                     return 1
                 self.logger.warning("下载失败!")
-                self.logger.info("自动重试---%d/3" % a)
+                self.logger.info("自动重试---%d/3" % error_count)
                 time.sleep(3)
-                a += 1
                 continue
-            finally:
-                if response.status != 200:
-                    self.logger.warning("下载失败!---响应状态码:%d" %
-                                        response.status_code)
-                    self.logger.info("自动重试---%d/3" % a)
-                    a += 1
-                    time.sleep(1)
-                    continue
-                else:
-                    break
-        if a == 3:
+            if response.status != 200:
+                error_count += 1
+                if error_count == 4:
+                    return response.status
+                self.logger.warning("下载失败!---响应状态码:%d" %
+                                    response.status)
+                self.logger.info("自动重试---%d/3" % error_count)
+                time.sleep(1)
+                continue
+            else:
+                break
+        if error_count == 3:
             self.logger.info("自动重试失败!")
             # 错误记录，但感觉没什么用
             # self.failure_recoder_mongo(id)
             return response.status
         f = open(path, "wb")
-        async for chunk in response.content.iter_chunked(1024):
+        while True:
             if not self.__event.is_set():
                 f.close()
                 os.remove(path)
-                return
+                return 0
+            chunk = await response.content.read(1024)
+            if not chunk:
+                break
             f.write(chunk)
             f.flush()
         f.close()
+        return 0
 
-    def download_image(self, info):
+    async def bound_download_image_async(self, session: aiohttp.ClientSession, info: tuple):
+        async with self.semaphore:
+            await self.download_image_async(session, info)
+
+    async def download_image_async(self, session: aiohttp.ClientSession, info: tuple):
         """从队列中获取数据并下载图片"""
         if not self.__event.is_set():
             return
@@ -255,7 +221,7 @@ class Downloader:
             image_dir = id + "/"
             zip_url = "https://i.pximg.net/img-zip-ugoira/" + info + "oira1920x1080.zip"
             self.logger.info("下载动图ID:%s" % id)
-            failcode = self.stream_download((zip_url, self.headers), save_name)
+            failcode = await self.stream_download_async(session, (zip_url, self.headers), save_name)
             if failcode:
                 if failcode != 1:
                     self.invalid_image_recorder(int(id), failcode)
@@ -291,10 +257,11 @@ class Downloader:
             img_url = "https://www.pixiv.net/artworks/" + id
             self.headers.update({"referer": img_url})
             self.logger.info("下载图片:ID:%s" % id)
-            failcode = self.stream_download((url, self.headers), path)
+            failcode = await self.stream_download_async(session, (url, self.headers), path)
             if failcode:
                 if failcode != 1:
-                    self.invalid_image_recorder(int(id), failcode)
+                    self.logger.warning("下载图片%s失败------%s" % (id, failcode))
+                    await self.invalid_image_recorder(int(id), failcode)
                     return
                 else:
                     self.logger.error("下载图片%s失败" % id)
@@ -314,7 +281,5 @@ class Downloader:
 
     def stop_downloading(self):
         self.__event.clear()
-        time.sleep(0.5)
-        self.pool.shutdown(wait=True, cancel_futures=True)
         self.logger.info("停止下载")
         return
