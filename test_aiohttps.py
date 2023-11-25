@@ -27,7 +27,7 @@ imagelist = [
 
 
 async def fetch_image(session: aiohttp.ClientSession, url: str, path: str) -> None:
-    async with session.get(url) as res:
+    async with session.get(url, proxy='http://localhost:1111') as res:
         if res.status != 200:
             print(res.status)
         # <StreamReader 8202 bytes>
@@ -43,7 +43,8 @@ async def fetch_image(session: aiohttp.ClientSession, url: str, path: str) -> No
 
 
 async def request(client):
-    resp = await client.get('https://www.pixiv.net/ajax/user/53184612?full=0')
+    resp = await client.get('https://www.pixiv.net/ajax/user/53184612?full=0',
+                            proxy='http://localhost:1111', trust_env=True,)
     result = await resp.json()
     print(result)
 
@@ -73,7 +74,8 @@ async def main():
 
 def fetch_image2(session: requests.Session, url: str, path: str) -> None:
     with session.get(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko)\
-         Chrome/69.0.3947.100 Safari/537.36', 'referer': 'https://www.pixiv.net/artworks/113102650'}, stream=True) as res:
+         Chrome/69.0.3947.100 Safari/537.36', 'referer': 'https://www.pixiv.net/artworks/113102650'}, stream=True, proxies={'http': 'http://localhost:1111', 'https': 'http://localhost:1111'}) as res: 
+        # 
         if res.status_code != 200:
             print(res.status_code)
         # print(res.content)
@@ -150,6 +152,9 @@ if __name__ == '__main__':
     # loop = asyncio.get_event_loop()
     # task = loop.create_task(main())
     # loop.run_until_complete(task)
-    main2()
+    # main2()
     # check_proxy()
     # print(get_and_check_proxy())
+    # resp = requests.get('https://www.pixiv.net/artworks/113102650', timeout=5,
+    #                     proxies={'http': 'http://localhost:1111', 'https': 'http://localhost:1111'})
+    # print(resp.status_code)
