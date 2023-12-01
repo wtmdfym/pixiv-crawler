@@ -1,0 +1,549 @@
+# -*-coding:utf-8-*-
+import os
+import re
+from PyQt6.QtCore import (
+    QSortFilterProxyModel,
+    Qt,
+    pyqtSlot,
+    QThreadPool,
+)
+from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QComboBox,
+    QCompleter,
+    QHBoxLayout,
+    QLabel,
+    QScrollArea,
+    QTableWidget,
+    QTextBrowser,
+    QVBoxLayout,
+    QWidget,
+)
+from GUI.tools import ImageLoader
+
+
+class ImageTableWidget(QTableWidget):
+    def __init__(self, parent: QWidget, save_path, logger, backupcollection, callback, usethumbnail: bool = False):
+        super().__init__(parent)
+        self.save_path = save_path
+        self.callback = callback
+        self.logger = logger
+        self.backup_collection = backupcollection
+        # 设置图片宽高
+        self.default_img_width = 240  # 320
+        self.default_img_height = 300  # 360
+        self.img_width = 240
+        self.img_height = 300
+        # 设置行数和列数
+        self.rows = 2
+        self.columns = 4
+        self.setRowCount(self.rows)
+        self.setColumnCount(self.columns)
+        # 设置大小
+        # self.setBaseSize
+        self.setFixedSize(
+            self.default_img_width * self.columns + 10,
+            self.default_img_height * self.rows + 10,
+        )
+        # 设置页码
+        self.pagesize = self.rows * self.columns
+        self.page = 1
+        # 是否使用缩略图
+        self.use_thumbnail = usethumbnail
+        # 初始化UI界面
+        self.initUI()
+        # 开启线程池
+        self.image_load_pool = QThreadPool()
+        self.image_load_pool.setMaxThreadCount(4)
+
+    def initUI(self):
+        # 设置单元格宽高
+        for i in range(self.rows):  # 让行高和图片相同
+            self.setRowHeight(i, self.img_height)
+        for i in range(self.columns):  # 让列宽和图片相同
+            self.setColumnWidth(i, self.img_width)
+
+        # 图片列表
+        self.image_datas = []
+
+        # 添加标签
+        for i in range(self.rows):
+            for j in range(self.columns):
+                label = QLabel()
+                # 设置对齐方式
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                # QSS Qt StyleSheet
+                label.setStyleSheet("QLabel{margin:5px};")
+                # 设置与宽高
+                label.setFixedSize(self.img_width, self.img_height)
+                # 添加到tablewidget
+                self.setCellWidget(i, j, label)
+
+        # 禁止编辑
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # 设置单选
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        # 根据内容自动调整列合行
+        # resizeColumnsToContents()
+        # resizeRowsToContents()
+        # 自定义表头和第一列，隐藏显示
+        self.horizontalHeader().setVisible(False)
+        self.verticalHeader().setVisible(False)
+        # 隐藏表格线
+        # self.setShowGrid(False)
+
+        # 事件绑定
+        self.itemSelectionChanged.connect(self.update_image_info)
+        self.image_datas = []
+
+    def search(self, search_info):
+        self.image_datas.clear()
+        self.work_number = 0
+        self.page = 1
+        self.total_page = 1
+        # self.results = None
+        if re.findall(r"\+", search_info):
+            and_search = []
+            for one_search in search_info.split("+"):
+                if re.search(r"\d{4,}", one_search):
+                    and_search.append({"userId": one_search})
+                else:
+                    and_search.append(
+                        {"tags." + one_search: {"$exists": "true"}})
+            self.results = self.backup_collection.find(
+                {"$and": and_search}).sort("id", -1)
+
+        elif re.findall(r"\,", search_info):
+            or_search = []
+            for one_search in search_info.split(","):
+                if re.search(r"\d{4,}", one_search):
+                    or_search.append({"userId": one_search})
+                else:
+                    or_search.append(
+                        {"tags." + one_search: {"$exists": "true"}})
+                self.results = self.backup_collection.find(
+                    {"$or": or_search}).sort("id", -1)
+
+        elif search_info:
+            one_search = {}
+            if re.search(r"\d{4,}", search_info):
+                one_search.update({"userId": search_info})
+            else:
+                one_search.update({"tags." + search_info: {"$exists": "true"}})
+            self.results = self.backup_collection.find(one_search).sort("id", -1)
+
+        else:
+            self.results = self.backup_collection.find(
+                {'id': {"$exists": "true"}}).sort("id", -1)
+
+        for row in self.results:
+            self.image_datas.append(row)
+            self.work_number += 1
+
+        self.total_page = (self.work_number -
+                           1) // (self.rows * self.columns) + 1
+        # print("总页数:%d"%(self.total_page))
+        """
+        #self.page_number = len(self.work_ids)//self.pagesize
+        #if len(self.work_ids)%self.pagesize !=0:
+        #    self.page_number+=1
+        self.page_number = self.work_number//self.pagesize
+        if self.work_number%self.pagesize !=0:
+            self.page_number+=1
+        print(self.page_number)
+        """
+        self.page = 1
+        self.update_image_new()
+        return self.page, self.total_page
+
+    def update_image(self):
+        self.images = self.image_datas[
+            (self.page - 1) * self.pagesize: self.page * self.pagesize
+        ]
+        for i in range(self.rows):
+            for j in range(self.columns):
+                label = self.cellWidget(i, j)
+                try:
+                    relative_path = self.images[i * self.columns + j].get(
+                        "relative_path"
+                    )[0]
+                except IndexError:
+                    label.clear()
+                    continue
+                if self.use_thumbnail:
+                    relative_path = re.search(
+                        "(?<=picture/).*", relative_path).group()
+                    path = self.save_path + "thumbnail/" + relative_path
+                else:
+                    path = self.save_path + relative_path
+                pixmap = self.load_image(path)
+                if pixmap == 2:
+                    # print("加载图片失败:"+relative_path)
+                    self.logger.warning("加载图片失败:" + relative_path)
+                elif pixmap == 3:
+                    label.setText("Not download")
+                else:
+                    label.setPixmap(pixmap)
+                QApplication.processEvents()
+
+    def load_image(self, path):
+        """
+        :return pixmap:缩放好的图片
+        :return 2:加载图片失败
+        :return 3:图片不存在
+        """
+        if os.path.exists(path):
+            image = QImage(path)
+            # image = QImage.fromData(data)
+            # image = image.convertToFormat(QImage.Format.Format_ARGB32)
+            image = image.scaled(
+                self.img_width,
+                self.img_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            pixmap = QPixmap()
+            if pixmap.convertFromImage(image):
+                return pixmap
+            else:
+                return 2
+        else:
+            return 3
+
+    def update_image_new(self):
+        self.image_load_pool.clear()
+        self.images = self.image_datas[
+            (self.page - 1) * self.pagesize: self.page * self.pagesize
+        ]
+        for i in range(self.rows):
+            for j in range(self.columns):
+                label = self.cellWidget(i, j)
+                try:
+                    relative_path = self.images[i * self.columns + j].get(
+                        "relative_path"
+                    )[0]
+                except IndexError:
+                    label.clear()
+                    continue
+                if self.use_thumbnail:
+                    relative_path = re.search(
+                        "(?<=picture/).*", relative_path).group()
+                    path = self.save_path + "thumbnail/" + relative_path
+                else:
+                    path = self.save_path + relative_path
+                index = (i, j)
+                imageloader = ImageLoader(
+                    self, self.img_width, self.img_height, index=index, image_path=path)
+                self.image_load_pool.start(imageloader)
+
+    @pyqtSlot(tuple, object)
+    def set_image(self, index, args):
+        """
+        设置ImageLoader返回的图片(槽函数)
+        :param index: 图片索引
+        :param args: 图片加载代码以及加载的Qpixmap格式图片
+        :return:
+        """
+        label = self.cellWidget(index[0], index[1])
+        code = args[0]
+        pixmap = args[1]
+        if code == 2:
+            self.logger.warning("加载图片失败!")
+        elif code == 3:
+            label.setText("Not download")
+        elif code == 0:
+            label.setPixmap(pixmap)
+        # QApplication.processEvents()
+
+    def update_image_info(self):
+        try:
+            index = self.selectedIndexes()[0]
+        except IndexError:
+            self.callback("", self.img_url, self.img_path)
+            return
+        index = index.row() * self.columns + index.column()
+        try:
+            result = self.images[index]
+        except IndexError:
+            self.callback("", "", "")
+            return
+        except AttributeError:
+            self.callback("", "", "")
+            return
+        id = result.get("id")
+        type = result.get("type")
+        title = result.get("title")
+        userid = result.get("userId")
+        username = result.get("username")
+        tags = result.get("tags")
+        description = result.get("description")
+        self.img_url = "https://www.pixiv.net/artworks/" + str(id)
+        self.img_path = result.get("relative_path")[0]
+
+        infos = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:{}\nDescription:\n{}"
+        self.callback(
+            infos.format(id, type, title, userid, username, tags, description),
+            self.img_url,
+            self.img_path,
+        )
+
+    def change_page(self, page):
+        self.page = page
+        # 清除选中
+        # self.clearSelection()
+        self.update_image_new()
+
+    def resizeEvent(self, e) -> None:
+        return super().resizeEvent(e)
+        # 设置单元格宽高
+        for i in range(self.rows):  # 让行高和图片相同
+            self.setRowHeight(i, self.img_height)
+        for i in range(self.columns):  # 让列宽和图片相同
+            self.setColumnWidth(i, self.img_width)
+
+
+class ExtendedComboBox(QComboBox):
+    """
+    扩展ComboBox插件 增加Items模糊搜索功能
+    """
+
+    def __init__(self, parent):
+        super(ExtendedComboBox, self).__init__(parent)
+        self.setEditable(True)
+
+        # add a filter model to filter matching items
+        self.pFilterModel = QSortFilterProxyModel(self)
+        self.pFilterModel.setFilterCaseSensitivity(
+            Qt.CaseSensitivity.CaseInsensitive)
+        self.pFilterModel.setSourceModel(self.model())
+
+        # add a completer, which uses the filter model
+        self.completer = QCompleter(self.pFilterModel, self)
+        # always show all (filtered) completions
+        self.completer.setCompletionMode(
+            QCompleter.CompletionMode.UnfilteredPopupCompletion
+        )
+        self.setCompleter(self.completer)
+
+        # connect signals
+        # self.lineEdit().textEdited.connect(self.pFilterModel.setFilterFixedString)
+        self.completer.activated.connect(self.on_completer_activated)
+
+    # on selection of an item from the completer, select the corresponding item from combobox
+    def on_completer_activated(self, text):
+        if text:
+            # index = self.findText(text)
+            # self.setCurrentIndex(index)
+            # self.activated[str].emit(self.itemText(index))
+            pass
+
+    # on model change, update the models of the filter and completer as well
+    def setModel(self, model):
+        super(ExtendedComboBox, self).setModel(model)
+        self.pFilterModel.setSourceModel(model)
+        self.completer().setModel(self.pFilterModel)
+
+    # on model column change, update the model column of the filter and completer as well
+    def setModelColumn(self, column):
+        self.completer().setCompletionColumn(column)
+        self.pFilterModel.setFilterKeyColumn(column)
+        super(ExtendedComboBox, self).setModelColumn(column)
+
+
+class ScrollArea(QScrollArea):
+    def __init__(self, parent: QWidget, logger, db, savepath: str, usethumbnail: bool = False):
+        super().__init__(parent)
+        self.save_path = savepath
+        self.logger = logger
+        self.db = db
+        self.use_thumbnail = usethumbnail
+        self.all_users = []
+        allfollowing = db["All Followings"]
+        for one in allfollowing.find(
+            {"userId": {"$exists": "true"}}, {"_id": 0}
+        ):
+            self.all_users.append(one)
+        self.page = 1
+        self.pagesize = 8
+        self.total_page = (
+            allfollowing.count_documents(
+                {"userId": {"$exists": "true"}})
+            // self.pagesize
+            + 1
+        )
+        # 开启线程池
+        self.image_load_pool = QThreadPool()
+        self.image_load_pool.setMaxThreadCount(8)
+        self.initUI()
+        self.show_user_info()
+
+    def initUI(self):
+        self.widget0 = QWidget()  # Widget that contains the collection of Vertical Box
+        self.vbox = (
+            QVBoxLayout()
+        )  # The Vertical Box that contains the Horizontal Boxes of  labels and buttons
+
+        self.img_width = 240
+        self.img_height = 300
+
+        self.widget0.setLayout(self.vbox)
+
+        # Scroll Area Properties
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setWidgetResizable(True)
+        self.setWidget(self.widget0)
+        self.verticalScrollBar().valueChanged.connect(self.stream_load)
+
+    @pyqtSlot(QLabel, object)
+    def set_image(self, label, args):
+        """
+        设置ImageLoader返回的图片(槽函数)
+        :param label: 标签对象
+        :param args: 图片加载代码以及加载的Qpixmap格式图片
+        :return:
+        """
+        code = args[0]
+        pixmap = args[1]
+        if code == 2:
+            self.logger.warning("加载图片失败!")
+        elif code == 3:
+            label.setText("Not download")
+        elif code == 0:
+            label.setPixmap(pixmap)
+        # QApplication.processEvents()
+
+    def load_image(self, path):
+        """
+        :return pixmap:缩放好的图片
+        :return 2:加载图片失败
+        :return 3:图片不存在
+        """
+        if os.path.exists(path):
+            image = QImage(path)
+            # image = QImage.fromData(data)
+            # image = image.convertToFormat(QImage.Format.Format_ARGB32)
+            image = image.scaled(
+                self.img_width,
+                self.img_height,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            pixmap = QPixmap()
+            if pixmap.convertFromImage(image):
+                return pixmap
+            else:
+                return 2
+        else:
+            return 3
+
+    def stream_load(self):
+        if self.verticalScrollBar().value() == self.verticalScrollBar().maximum():
+            if self.page < self.total_page:
+                self.page += 1
+                # print('Loading...')
+                # logger.info("Loading...")
+                self.show_user_info()
+
+    def show_user_info(self):
+        self.image1s = []
+        if len(self.all_users) >= 8:
+            user_infos = self.all_users[
+                (self.page - 1) * self.pagesize: self.page * self.pagesize
+            ]
+        else:
+            user_infos = self.all_users
+        for user_info in user_infos:
+            layout = QHBoxLayout()
+            info = "userName:{}\nuserId:{}\nuserComment:{}".format(
+                user_info["userName"], user_info["userId"], user_info.get(
+                    "userComment")
+            )
+            userinfoDisplear = QTextBrowser()
+            userinfoDisplear.setFixedSize(self.img_width, self.img_height)
+            userinfoDisplear.setPlainText(info)
+            layout.addWidget(userinfoDisplear)
+            collection = self.db[user_info["userName"]]
+            for one in (
+                collection.find(
+                    {"id": {"$exists": "true"}}, {"_id": 0, "relative_path": 1}
+                )
+                .sort("id", -1)
+                .limit(4)
+            ):
+                relative_path = one.get("relative_path")[0]
+                if self.use_thumbnail:
+                    relative_path = re.search(
+                        "(?<=picture/).*", relative_path).group()
+                    path = self.save_path + \
+                        "thumbnail/" + relative_path
+                else:
+                    path = self.save_path + relative_path
+                label = QLabel()
+                # 设置对齐方式
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                # QSS Qt StyleSheet
+                label.setStyleSheet("QLabel{margin:1px};")
+                # 设置与宽高
+                label.setFixedSize(self.img_width, self.img_height)
+                pixmap = self.load_image(path)
+                if pixmap == 2:
+                    # print("加载图片失败:"+relative_path)
+                    self.logger.warning("加载图片失败:" + relative_path)
+                elif pixmap == 3:
+                    label.setText("Not download")
+                else:
+                    # 显示图片
+                    label.setPixmap(pixmap)
+                layout.addWidget(label)
+            self.vbox.addLayout(layout)
+
+    def show_user_info_new(self):
+        self.image1s = []
+        if len(self.all_users) >= 8:
+            user_infos = self.all_users[
+                (self.page - 1) * self.pagesize: self.page * self.pagesize
+            ]
+        else:
+            user_infos = self.all_users
+        for user_info in user_infos:
+            layout = QHBoxLayout()
+            info = "userName:{}\nuserId:{}\nuserComment:{}".format(
+                user_info["userName"], user_info["userId"], user_info.get(
+                    "userComment")
+            )
+            userinfoDisplear = QTextBrowser()
+            userinfoDisplear.setFixedSize(self.img_width, self.img_height)
+            userinfoDisplear.setPlainText(info)
+            layout.addWidget(userinfoDisplear)
+            collection = self.db[user_info["userName"]]
+            for one in (
+                collection.find(
+                    {"id": {"$exists": "true"}}, {"_id": 0, "relative_path": 1}
+                )
+                .sort("id", -1)
+                .limit(4)
+            ):
+                relative_path = one.get("relative_path")[0]
+                if self.use_thumbnail:
+                    relative_path = re.search(
+                        "(?<=picture/).*", relative_path).group()
+                    path = self.save_path + \
+                        "thumbnail/" + relative_path
+                else:
+                    path = self.save_path + relative_path
+                label = QLabel()
+                # 设置对齐方式
+                label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                # QSS Qt StyleSheet
+                label.setStyleSheet("QLabel{margin:1px};")
+                # 设置与宽高
+                label.setFixedSize(self.img_width, self.img_height)
+                imageloader = ImageLoader(
+                    self, self.img_width, self.img_height, target=label, image_path=path)
+                self.image_load_pool.start(imageloader)
+                layout.addWidget(label)
+            self.vbox.addLayout(layout)

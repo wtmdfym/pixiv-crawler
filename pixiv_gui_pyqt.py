@@ -301,7 +301,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.statusbar)
         self.menubar.addAction(self.menuHelp.menuAction())
 
-        self.retranslateUi()
+        self.retranslateUi(MainWindow)
         self.tabWidget.setCurrentIndex(1)
         # self.statusbar.showMessage
         QMetaObject.connectSlotsByName(self)
@@ -340,10 +340,10 @@ class MainWindow(QMainWindow):
         self.setTabOrder(self.database_backupButton, self.save_configsButton)
         """
 
-    def retranslateUi(self):
+    def retranslateUi(self, MainWindow):
         # 显示翻译
         _translate = QCoreApplication.translate
-        self.setWindowTitle(_translate("MainWindow", "MainWindow"))
+        MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
         self.tab.retranslateUi()
         self.tabWidget.setTabText(
             self.tabWidget.indexOf(self.tab), _translate(
