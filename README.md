@@ -1,6 +1,6 @@
 ﻿# pixiv-crawler
 A web crawler of pixiv.
-## focuntion:
+## Focuntions:
 ### Web Crawler
   - [x] 获取关注的用户信息
   - [x] 获取作品信息
@@ -17,5 +17,5 @@ A web crawler of pixiv.
   - [x] 作者详情浏览器
   - [x] 设置
   - [x] 使用MongoDB储存数据
-  - [ ] 大图浏览器
+  - [x] 大图浏览器50%
   - [ ] css/qss样式
