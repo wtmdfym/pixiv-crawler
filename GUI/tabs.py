@@ -31,7 +31,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 import pixiv_pyqt_tools
-from GUI.widgets import ImageTableWidget, ScrollArea, ExtendedComboBox
+from GUI.widgets import ImageTableWidget, ScrollArea, ExtendedComboBox, ImageBox
 from GUI.tools import AsyncDownloadThreadingManger
 
 
@@ -101,7 +101,7 @@ class MainTab(QWidget):
         _translate = QCoreApplication.translate
         self.inputEdit.setPlaceholderText(
             _translate("MainWindow", "输入要下载的作品id或标签"))
-        self.startButton.setText(_translate("MainWindow", "Start"))
+        self.startButton.setText(_translate("MainWindow", "start"))
         self.radioButton.setText(_translate("MainWindow", "Onework"))
         self.radioButton_2.setText(_translate("MainWindow", "Tags"))
         self.radioButton_3.setText(_translate("MainWindow", "Followings"))
@@ -164,7 +164,7 @@ class MainTab(QWidget):
 
 
 class SearchTab(QWidget):
-    def __init__(self, save_path: str, logger, backupcollection, usethumbnail: bool = False):
+    def __init__(self, save_path: str, logger, backupcollection, show_image_callback, usethumbnail: bool = False):
         super().__init__()
         self.page = 1
         self.total_page = 1
@@ -174,9 +174,9 @@ class SearchTab(QWidget):
         self.image_path = self.save_path + "picture/"
         self.default_width = 1220
         self.default_height = 700
-        self.initUI(backupcollection, usethumbnail)
+        self.initUI(backupcollection, show_image_callback, usethumbnail)
 
-    def initUI(self, backupcollection, usethumbnail):
+    def initUI(self, backupcollection, show_image_callback, usethumbnail):
         self.setGeometry(QRect(0, 0, self.default_width, self.default_height))
         self.gridLayout = QGridLayout(self)
         self.gridLayout.setContentsMargins(0, 0, 0, 0)
@@ -205,7 +205,8 @@ class SearchTab(QWidget):
         self.gridLayout.addWidget(self.imageinfoDisplayer, 3, 0, 1, 3)
         self.imagedisplatLayout = QVBoxLayout()
         self.images_tableWidget = ImageTableWidget(
-            self, self.save_path, self.logger, backupcollection, self.update_image_info, usethumbnail
+            self, self.save_path, self.logger, backupcollection,
+            self.update_image_info, show_image_callback, usethumbnail
         )
         self.imagedisplatLayout.addWidget(self.images_tableWidget, 0)
         # self.gridLayout.addWidget(self.images_tableWidget, 0, 3, 2, 1)
@@ -549,6 +550,8 @@ class ConfigTab(QWidget):
         # 显示设置信息
         self.savepathEdit.setText(config_dict.get("save_path"))
         self.cookiesEdit.setPlainText(str(config_dict.get("cookies")))
+        self.http_proxiesEdit.setText(config_dict.get("http_proxies"))
+        self.https_proxiesEdit.setText(config_dict.get("https_proxies"))
         self.enable_console_outputCheckBox.setChecked(
             config_dict.get("enable_console_output"))
         self.enable_thumbnailCheckBox.setChecked(
@@ -599,18 +602,27 @@ class ConfigTab(QWidget):
         self.cookiesEdit = QPlainTextEdit(parent=self)
         self.cookiesEdit.setObjectName("cookiesEdit")
         self.gridLayout.addWidget(self.cookiesEdit, 1, 1, 1, 2)
+        # 代理
+        self.http_proxiesLabel = QLabel(parent=self)
+        self.gridLayout.addWidget(self.http_proxiesLabel, 2, 0, 1, 1)
+        self.http_proxiesEdit = QLineEdit(parent=self)
+        self.gridLayout.addWidget(self.http_proxiesEdit, 2, 1, 1, 2)
+        self.https_proxiesLabel = QLabel(parent=self)
+        self.gridLayout.addWidget(self.https_proxiesLabel, 3, 0, 1, 1)
+        self.https_proxiesEdit = QLineEdit(parent=self)
+        self.gridLayout.addWidget(self.https_proxiesEdit, 3, 1, 1, 2)
         # 启用控制台输出
         self.enable_console_outputCheckBox = QCheckBox(parent=self)
         self.gridLayout.addWidget(
-            self.enable_console_outputCheckBox, 2, 0, 1, 3)
+            self.enable_console_outputCheckBox, 4, 0, 1, 3)
         # 缩略图
         self.enable_thumbnailCheckBox = QCheckBox(parent=self)
-        self.gridLayout.addWidget(self.enable_thumbnailCheckBox, 3, 0, 1, 1)
+        self.gridLayout.addWidget(self.enable_thumbnailCheckBox, 5, 0, 1, 1)
         self.generate_thumbnailButton = QPushButton(parent=self)
-        self.gridLayout.addWidget(self.generate_thumbnailButton, 3, 1, 1, 2)
+        self.gridLayout.addWidget(self.generate_thumbnailButton, 5, 1, 1, 2)
         # 最大并发数
         self.semaphoreLabel = QLabel(parent=self)
-        self.gridLayout.addWidget(self.semaphoreLabel, 4, 0, 1, 1)
+        self.gridLayout.addWidget(self.semaphoreLabel, 6, 0, 1, 1)
         self.semaphoreComboBox = QComboBox(parent=self)
         self.semaphoreComboBox.setObjectName(
             "download_t_numberComboBox")
@@ -621,11 +633,11 @@ class ConfigTab(QWidget):
         self.semaphoreComboBox.addItem("")
         self.semaphoreComboBox.addItem("")
         self.gridLayout.addWidget(
-            self.semaphoreComboBox, 4, 1, 1, 2)
+            self.semaphoreComboBox, 6, 1, 1, 2)
         # 下载线程数
         self.download_t_numberLabel = QLabel(parent=self)
         self.download_t_numberLabel.setObjectName("download_t_numberLabel")
-        self.gridLayout.addWidget(self.download_t_numberLabel, 5, 0, 1, 1)
+        self.gridLayout.addWidget(self.download_t_numberLabel, 7, 0, 1, 1)
         self.download_thread_numberComboBox = QComboBox(parent=self)
         self.download_thread_numberComboBox.setObjectName(
             "download_t_numberComboBox")
@@ -634,43 +646,47 @@ class ConfigTab(QWidget):
         self.download_thread_numberComboBox.addItem("")
         self.download_thread_numberComboBox.addItem("")
         self.gridLayout.addWidget(
-            self.download_thread_numberComboBox, 5, 1, 1, 2)
+            self.download_thread_numberComboBox, 7, 1, 1, 2)
         # 下载作品类型
         self.download_typeLabel = QLabel(parent=self)
         self.download_typeLabel.setObjectName("download_typeLabel")
-        self.gridLayout.addWidget(self.download_typeLabel, 6, 0, 1, 3)
+        self.gridLayout.addWidget(self.download_typeLabel, 8, 0, 1, 3)
         self.getillustsCheckBox = QCheckBox(parent=self)
         self.getillustsCheckBox.setObjectName("getillustsCheckBox")
-        self.gridLayout.addWidget(self.getillustsCheckBox, 7, 0, 1, 3)
+        self.gridLayout.addWidget(self.getillustsCheckBox, 9, 0, 1, 3)
         self.getmangaCheckBox = QCheckBox(parent=self)
         self.getmangaCheckBox.setObjectName("getmangaCheckBox")
-        self.gridLayout.addWidget(self.getmangaCheckBox, 8, 0, 1, 3)
+        self.gridLayout.addWidget(self.getmangaCheckBox, 10, 0, 1, 3)
         self.getmangaSeriesCheckBox = QCheckBox(parent=self)
         self.getmangaSeriesCheckBox.setObjectName("getmangaSeriesCheckBox")
-        self.gridLayout.addWidget(self.getmangaSeriesCheckBox, 9, 0, 1, 3)
+        self.gridLayout.addWidget(self.getmangaSeriesCheckBox, 11, 0, 1, 3)
         self.getnovelSeriesCheckBox = QCheckBox(parent=self)
         self.getnovelSeriesCheckBox.setObjectName("getnovelSeriesCheckBox")
-        self.gridLayout.addWidget(self.getnovelSeriesCheckBox, 10, 0, 1, 3)
+        self.gridLayout.addWidget(self.getnovelSeriesCheckBox, 12, 0, 1, 3)
         self.getnovelsCheckBox = QCheckBox(parent=self)
         self.getnovelsCheckBox.setObjectName("getnovelsCheckBox")
-        self.gridLayout.addWidget(self.getnovelsCheckBox, 11, 0, 1, 3)
+        self.gridLayout.addWidget(self.getnovelsCheckBox, 13, 0, 1, 3)
         # 保存按钮
         self.save_configsButton = QPushButton(parent=self)
         self.save_configsButton.setObjectName("save_configsButton")
-        self.gridLayout.addWidget(self.save_configsButton, 12, 0, 1, 1)
+        self.gridLayout.addWidget(self.save_configsButton, 14, 0, 1, 1)
         # 重载GUI界面按钮
         self.reloadUIButton = QPushButton(parent=self)
         self.reloadUIButton.setObjectName("reloadUIButton")
-        self.gridLayout.addWidget(self.reloadUIButton, 12, 1, 1, 1)
+        self.gridLayout.addWidget(self.reloadUIButton, 14, 1, 1, 1)
         # 数据库备份按钮
         self.database_backupButton = QPushButton(parent=self)
         self.database_backupButton.setObjectName("database_backupButton")
-        self.gridLayout.addWidget(self.database_backupButton, 12, 2, 1, 1)
+        self.gridLayout.addWidget(self.database_backupButton, 14, 2, 1, 1)
 
     def retranslateUi(self):
         _translate = QCoreApplication.translate
-        self.pathLabel.setText(_translate("MainWindow", "save path"))
-        self.cookieLabel.setText(_translate("MainWindow", "cookies"))
+        self.pathLabel.setText(_translate("MainWindow", "save path:"))
+        self.cookieLabel.setText(_translate("MainWindow", "cookies:"))
+        self.http_proxiesLabel.setText(_translate("MainWindow", "http proxies:"))
+        self.http_proxiesEdit.setPlaceholderText(_translate("MainWindow", "eg:http://localhost:1111"))
+        self.https_proxiesLabel.setText(_translate("MainWindow", "https proxies:"))
+        self.https_proxiesEdit.setPlaceholderText(_translate("MainWindow", "eg:https://162.144.1.241:1111"))
         self.enable_console_outputCheckBox.setText(
             _translate("MainWindow", "启用控制台输出"))
         self.enable_thumbnailCheckBox.setText(
@@ -732,6 +748,8 @@ class ConfigTab(QWidget):
             new_config_dict["cookies"] = pixiv_pyqt_tools.Tools.analyze_cookie(
                 cookies)
             self.cookiesEdit.setPlainText(str(new_config_dict["cookies"]))
+        new_config_dict["http_proxies"] = self.http_proxiesEdit.text()
+        new_config_dict["https_proxies"] = self.https_proxiesEdit.text()
         new_config_dict["enable_console_output"] = self.enable_console_outputCheckBox.isChecked()
         new_config_dict["use_thumbnail"] = self.enable_thumbnailCheckBox.isChecked()
         new_config_dict["semaphore"] = (
@@ -896,3 +914,22 @@ class ConfigTab(QWidget):
 
         def stop(self):
             self.ifstop = True
+
+
+class OriginalImageTab(QWidget):
+    def __init__(self) -> None:
+        super().__init__()
+        self.initUI()
+
+    def initUI(self):
+        self.gridLayout = QGridLayout(self)
+        self.gridLayout.setObjectName("gridLayout")
+        self.box = ImageBox()
+        self.gridLayout.addWidget(self.box, 0, 0, 1, 1)
+
+    def open_image(self, img_name):
+        """
+        open image file
+        :return:
+        """
+        self.box.set_image(img_name)

@@ -37,9 +37,9 @@ class InfoFetcher:
     __proxies = 'http://localhost:1111'
     __event = asyncio.Event()
 
-    def __init__(self, cookies: str, download_type: dict, db, backup_collection, logger,
+    def __init__(self, cookies: str, download_type: dict, asyncdb, backup_collection, logger,
                  semaphore: int = None, progress_signal=None) -> None:
-        self.db = db
+        self.db = asyncdb
         self.cookies = cookies
         self.download_type = download_type
         self.backup_collection = backup_collection
@@ -513,6 +513,11 @@ class InfoFetcher:
                         await self.backup_collection.insert_one(docs)
         self.logger.info("自动备份完成!")
         return True
+
+    def set_proxies(self, proxies: tuple):
+        http_proxies = proxies[0]
+        # https_proxies = proxies[1]
+        self.__proxies = http_proxies
 
     def stop_getting(self):
         self.__event.clear()

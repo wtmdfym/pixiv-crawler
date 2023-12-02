@@ -19,7 +19,8 @@ class FollowingsRecorder:
         headers: The headers when sending a HTTP request to pixiv
     """
     __version = ''
-    __proxies = {'http': 'http://localhost:1111', 'https': 'http://localhost:1111'}
+    __proxies = {'http': 'http://localhost:1111',
+                 'https': 'http://localhost:1111'}
     __event = threading.Event()
 
     def __init__(self, cookies: dict, database, logger, progress_signal):
@@ -251,6 +252,11 @@ class FollowingsRecorder:
             doc.update({"username": name2})
             collection_2.insert_one(doc)
         collection_1.drop()
+
+    def set_proxies(self, proxies: tuple):
+        http_proxies = proxies[0]
+        https_proxies = proxies[1]
+        self.__proxies.update({'http': http_proxies, 'https': https_proxies})
 
     def stop_recording(self) -> None:
         """Stop the function from running

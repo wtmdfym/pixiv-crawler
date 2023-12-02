@@ -114,6 +114,7 @@ class AsyncDownloadThreadingManger(QThread):
         self.logger = logger
 
     def run(self):
+        proxies = (self.config_dict["http_proxies"], self.config_dict["https_proxies"])
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         newtime = time.strftime("%Y%m%d%H%M%S")
@@ -126,6 +127,7 @@ class AsyncDownloadThreadingManger(QThread):
             self.followings_recorder = infofetcher.FollowingsRecorder(
                 self.config_dict["cookies"], self.db, self.logger, self.progress_signal
             )
+            self.followings_recorder.set_proxies(proxies)
             success = self.followings_recorder.following_recorder()
             if not success:
                 self.break_signal.emit()
@@ -140,9 +142,10 @@ class AsyncDownloadThreadingManger(QThread):
                 self.asyncdb,
                 self.asyncbackup_collection,
                 self.logger,
-                semaphore=2
+                semaphore=self.config_dict["semaphore"]
             )
-            success = loop.run_until_complete(asyncio.create_task(
+            self.info_getter.set_proxies(proxies)
+            success = loop.run_until_complete(asyncio.ensure_future(
                 self.info_getter.start_get_info_async()))
             if success:
                 self.config_dict.update({"last_record_time": newtime})
@@ -161,8 +164,8 @@ class AsyncDownloadThreadingManger(QThread):
             self.config_dict["download_thread_number"],
             self.backup_collection,
             self.logger,
-            self.progress_signal
         )
+        self.downloader.set_proxies(proxies)
         self.downloader.start_following_download()
         # loop.run_until_complete(asyncio.ensure_future(self.downloader.start_following_download()))
         del self.downloader

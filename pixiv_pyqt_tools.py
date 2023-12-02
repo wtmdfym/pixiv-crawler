@@ -266,7 +266,7 @@ class InfoGetter:
     """
 
     def __init__(self, cookies: str, download_type: dict, db, backup_collection, logger,
-                 semaphore: int = None, progress_signal=None) -> None:
+                 semaphore: int = 1, progress_signal=None) -> None:
         self.db = db
         self.cookies = cookies
         self.download_type = download_type

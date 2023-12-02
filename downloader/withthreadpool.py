@@ -10,24 +10,20 @@ import requests
 from PIL import Image
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-proxie = ''  # {'http': 'http://localhost:1111', 'https': 'http://localhost:1111'}
-
 
 class Downloader:
     """
     下载图片
     TODO 下载小说
     """
+    __proxies = {'http': 'http://localhost:1111', 'https': 'http://localhost:1111'}
 
-    def __init__(
-        self, host_path, cookies, download_type, download_number, backup_collection, logger, progress_signal
-    ) -> None:
+    def __init__(self, host_path, cookies, download_type, download_number, backup_collection, logger) -> None:
         self.cookies = cookies
         self.host_path = host_path
         self.download_type = download_type
         self.backup_collection = backup_collection
         self.logger = logger
-        self.progress_signal = progress_signal
         self.headers = {
             "User-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188",
@@ -94,6 +90,7 @@ class Downloader:
         """
         self.logger.info("开始下载\n由于需要读取数据库信息并检测是否下载,所以可能等待较长时间")
         tasks = []
+        session = requests.Session()
         for doc in self.backup_collection.find({"id": {"$exists": True}}):
             if not self.event.is_set():
                 return
@@ -125,7 +122,7 @@ class Downloader:
                 # 检测是否已下载
                 if not os.path.isfile(path=path):
                     info = [id, url, path]
-                    tasks.append(self.pool.submit(self.download_image, info))
+                    tasks.append(self.pool.submit(self.download_image, session, info))
 
             for future in as_completed(tasks):
                 if not self.event.is_set():
@@ -142,70 +139,61 @@ class Downloader:
             self.logger.error(
                 "error in record invaild image:" + id + "\n" + doc)
 
-    def stream_download(self, request_info, path):
+    def stream_download(self, session: requests.Session,  request_info, path):
         """
         流式接收数据并写入文件
         """
         url, headers = request_info
-        try:
-            response = requests.get(
-                url,
-                headers=headers,
-                cookies=self.cookies,
-                proxies=proxie,
-                stream=True,
-                timeout=5,
-            )
-        except Exception:
-            self.logger.warning("下载失败!")
-            for a in range(1, 4):
+        response = None
+        for a in range(1, 4):
+            try:
+                response = session.get(
+                    url,
+                    headers=headers,
+                    cookies=self.cookies,
+                    proxies=self.__proxies,
+                    stream=True,
+                    timeout=5,
+                )
+                if response.status_code != 200:
+                    self.logger.warning("下载失败!---响应状态码:%d" %
+                                        response.status_code)
+                    continue
+            except Exception:
+                if a == 4:
+                    self.logger.info("自动重试失败!")
+                    if response:
+                        if response.status_code != 200:
+                            return response.status_code
+                    else:
+                        return 1
+                        # 错误记录，但感觉没什么用
+                        # self.failure_recoder_mongo(id)
+                self.logger.warning("下载失败!")
                 self.logger.info("自动重试---%d/3" % a)
                 time.sleep(3)
-                try:
-                    response = requests.get(
-                        url,
-                        headers=headers,
-                        cookies=self.cookies,
-                        proxies=proxie,
-                        stream=True,
-                        timeout=5,
-                    )
-                    if response.status_code != 200:
-                        self.logger.warning("下载失败!---响应状态码:%d" %
-                                            response.status_code)
-                    f = open(path, "wb")
-                    for chunk in response.iter_content(1024):
-                        if not self.event.is_set():
-                            f.close()
-                            os.remove(path)
-                            return
-                        f.write(chunk)
-                        f.flush()
-                    f.close()
-                except Exception:
-                    self.logger.info("自动重试失败!")
-                    return 1
-                    # 错误记录，但感觉没什么用
-                    # if a == 3:self.failure_recoder_mongo(id)
-        if response.status_code != 200:
-            self.logger.warning("下载失败!---响应状态码:%d" % response.status_code)
-            return response.status_code
+            finally:
+                if a == 4:
+                    if response:
+                        if response.status_code != 200:
+                            return response.status_code
+                    else:
+                        return 1
         '''
         with open(path, "wb") as f:
             f.write(response.content)
             f.flush()
         '''
-        f = open(path, "wb")
-        for chunk in response.iter_content(1024):
-            if not self.event.is_set():
-                f.close()
-                os.remove(path)
-                return
-            f.write(chunk)
-            f.flush()
-        f.close()
+        with open(path, "wb") as f:
+            for chunk in response.iter_content(1024):
+                if not self.event.is_set():
+                    f.close()
+                    os.remove(path)
+                    return
+                f.write(chunk)
+                f.flush()
 
-    def download_image(self, info):
+    def download_image(self, session: requests.Session, info):
         """从队列中获取数据并下载图片"""
         if not self.event.is_set():
             return
@@ -220,7 +208,7 @@ class Downloader:
             image_dir = id + "/"
             zip_url = "https://i.pximg.net/img-zip-ugoira/" + info + "oira1920x1080.zip"
             self.logger.info("下载动图ID:%s" % id)
-            failcode = self.stream_download((zip_url, self.headers), save_name)
+            failcode = self.stream_download(session, (zip_url, self.headers), save_name)
             if failcode:
                 if failcode != 1:
                     self.invalid_image_recorder(int(id), failcode)
@@ -256,7 +244,7 @@ class Downloader:
             img_url = "https://www.pixiv.net/artworks/" + id
             self.headers.update({"referer": img_url})
             self.logger.info("下载图片:ID:%s" % id)
-            failcode = self.stream_download((url, self.headers), path)
+            failcode = self.stream_download(session, (url, self.headers), path)
             if failcode:
                 if failcode != 1:
                     self.invalid_image_recorder(int(id), failcode)
@@ -273,6 +261,11 @@ class Downloader:
                 "下载图片{}完成,耗时:{},保存至:{}".format(id, run_time, path))
         else:
             self.logger.error("图片保存失败")
+
+    def set_proxies(self, proxies: tuple):
+        http_proxies = proxies[0]
+        https_proxies = proxies[1]
+        self.__proxies.update({'http': http_proxies, 'https': https_proxies})
 
     def pause_downloading(self):
         pass

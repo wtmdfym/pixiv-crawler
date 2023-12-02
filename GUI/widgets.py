@@ -6,8 +6,9 @@ from PyQt6.QtCore import (
     Qt,
     pyqtSlot,
     QThreadPool,
+    QPoint,
 )
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtGui import QImage, QPixmap, QPainter
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -25,10 +26,12 @@ from GUI.tools import ImageLoader
 
 
 class ImageTableWidget(QTableWidget):
-    def __init__(self, parent: QWidget, save_path, logger, backupcollection, callback, usethumbnail: bool = False):
+    def __init__(self, parent: QWidget, save_path, logger,
+                 backupcollection, callback, show_image_callback, usethumbnail: bool = False):
         super().__init__(parent)
         self.save_path = save_path
         self.callback = callback
+        self.show_image_callback = show_image_callback
         self.logger = logger
         self.backup_collection = backupcollection
         # 设置图片宽高
@@ -96,6 +99,7 @@ class ImageTableWidget(QTableWidget):
 
         # 事件绑定
         self.itemSelectionChanged.connect(self.update_image_info)
+        self.doubleClicked.connect(self.show_original_image)
         self.image_datas = []
 
     def search(self, search_info):
@@ -132,7 +136,8 @@ class ImageTableWidget(QTableWidget):
                 one_search.update({"userId": search_info})
             else:
                 one_search.update({"tags." + search_info: {"$exists": "true"}})
-            self.results = self.backup_collection.find(one_search).sort("id", -1)
+            self.results = self.backup_collection.find(
+                one_search).sort("id", -1)
 
         else:
             self.results = self.backup_collection.find(
@@ -288,6 +293,22 @@ class ImageTableWidget(QTableWidget):
             self.img_url,
             self.img_path,
         )
+
+    def show_original_image(self):
+        try:
+            index = self.selectedIndexes()[0]
+        except IndexError:
+            return
+        index = index.row() * self.columns + index.column()
+        try:
+            result = self.images[index]
+        except IndexError:
+            return
+        except AttributeError:
+            return
+        id = result.get("id")
+        img_paths = result.get("relative_path")
+        self.show_image_callback(id, img_paths)
 
     def change_page(self, page):
         self.page = page
@@ -547,3 +568,82 @@ class ScrollArea(QScrollArea):
                 self.image_load_pool.start(imageloader)
                 layout.addWidget(label)
             self.vbox.addLayout(layout)
+
+
+class ImageBox(QWidget):
+    def __init__(self):
+        super(ImageBox, self).__init__()
+        self.img = None
+        self.scaled_img = None
+        self.point = QPoint(0, 0)
+        self.start_pos = None
+        self.end_pos = None
+        self.left_click = False
+        self.scale = 1
+
+    def set_image(self, img_path):
+        """
+        open image file
+        :param img_path: image file path
+        :return:
+        """
+        # img = QImageReader(img_path)
+        # img.setScaledSize(QSize(self.size().width(), self.size().height()))
+        # img = img.read()
+        self.img = QPixmap(img_path)
+        self.scaled_img = self.img
+
+    def paintEvent(self, e):
+        """
+        receive paint events
+        :param e: QPaintEvent
+        :return:
+        """
+        if self.scaled_img:
+            painter = QPainter()
+            painter.begin(self)
+            painter.scale(self.scale, self.scale)
+            painter.drawPixmap(self.point, self.scaled_img)
+            painter.end()
+
+    def wheelEvent(self, event):
+        angle = event.angleDelta() / 8  # 返回QPoint对象，为滚轮转过的数值，单位为1/8度
+        angleY = angle.y()
+        # 获取当前鼠标相对于view的位置
+        if angleY > 0:
+            self.scale *= 1.1
+        else:  # 滚轮下滚
+            self.scale *= 0.9
+        self.adjustSize()
+        self.update()
+
+    def mouseMoveEvent(self, e):
+        """
+        mouse move events for the widget
+        :param e: QMouseEvent
+        :return:
+        """
+        if self.left_click:
+            self.end_pos = e.pos() - self.start_pos
+            self.point = self.point + self.end_pos*(1/self.scale)
+            self.start_pos = e.pos()
+            self.repaint()
+
+    def mousePressEvent(self, e):
+        """
+        mouse press events for the widget
+        :param e: QMouseEvent
+        :return:
+        """
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.left_click = True
+            self.start_pos = e.pos()
+
+    def mouseReleaseEvent(self, e):
+        """
+        mouse release events for the widget
+        :param e: QMouseEvent
+        :return:
+        """
+        if e.button() == Qt.MouseButton.LeftButton:
+            self.left_click = False

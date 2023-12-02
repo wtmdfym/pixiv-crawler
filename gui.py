@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QStatusBar,
     QTabWidget,
+    # QTabBar,
     QWidget,
 )
 
@@ -215,6 +216,10 @@ class Ui_MainWindow(object):
         self.tabWidget.setTabShape(QTabWidget.TabShape.Rounded)
         self.tabWidget.setDocumentMode(False)
         self.tabWidget.setObjectName("tabWidget")
+        # 设置tab可关闭
+        self.tabWidget.setTabsClosable(True)
+        self.tabWidget.tabCloseRequested.connect(self.close_tab)
+        # self.tabWidget.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
         # 初始化MainTab
         self.tab = MainTab(self.config_dict, self.config_save_path, self.db,
                            self.backup_collection, self.asyncdb, self.asyncbackup_collection, logger)
@@ -222,7 +227,8 @@ class Ui_MainWindow(object):
         self.tabWidget.addTab(self.tab, "")
         # 初始化SearchTab
         self.tab_1 = SearchTab(
-            self.config_dict["save_path"], logger, self.backup_collection, self.config_dict["use_thumbnail"])
+            self.config_dict["save_path"], logger, self.backup_collection,
+            self.creat_image_tab, self.config_dict["use_thumbnail"])
         self.tab_1.setObjectName("SearchTab")
         self.tabWidget.addTab(self.tab_1, "")
         # 初始化TagsTab
@@ -350,8 +356,20 @@ class Ui_MainWindow(object):
         self.setupUi(self.MainWindow)
         # 重新设置logger
         logger = MyLogging()
-        logger.init(ui.config_dict["enable_console_output"], ui.tab.infodisplayer)
+        logger.init(
+            ui.config_dict["enable_console_output"], ui.tab.infodisplayer)
         logger.addHandler(console_handler)
+
+    def creat_image_tab(self, id: int, paths: list[str]):
+        import GUI.tabs
+        tab = GUI.tabs.OriginalImageTab()
+        self.tabWidget.addTab(tab, str(id))
+        tab.open_image(self.config_dict["save_path"]+paths[0])
+
+    def close_tab(self, index):
+        if index <= 4:
+            return
+        self.tabWidget.removeTab(index)
 
 
 class mainwindow(QMainWindow):

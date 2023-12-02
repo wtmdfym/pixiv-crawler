@@ -301,7 +301,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.statusbar)
         self.menubar.addAction(self.menuHelp.menuAction())
 
-        self.retranslateUi(MainWindow)
+        self.retranslateUi()
         self.tabWidget.setCurrentIndex(1)
         # self.statusbar.showMessage
         QMetaObject.connectSlotsByName(self)
@@ -340,10 +340,10 @@ class MainWindow(QMainWindow):
         self.setTabOrder(self.database_backupButton, self.save_configsButton)
         """
 
-    def retranslateUi(self, MainWindow):
+    def retranslateUi(self):
         # 显示翻译
         _translate = QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "MainWindow"))
+        self.setWindowTitle(_translate("MainWindow", "MainWindow"))
         self.tab.retranslateUi()
         self.tabWidget.setTabText(
             self.tabWidget.indexOf(self.tab), _translate(
@@ -520,8 +520,8 @@ class MainTab(QWidget):
             )
             downloader.start_work_download(id=self.inputEdit.text())
         elif self.download_method == "followings":
-            # self.t = DownloadThreadingManger()
-            self.t = AsyncDownloadThreadingManger()
+            self.t = DownloadThreadingManger()
+            # self.t = AsyncDownloadThreadingManger()
             self.t.progress_signal.connect(self.update_progressBar)
             self.t.break_signal.connect(self.stop_download)
             self.t.start()
@@ -580,7 +580,7 @@ class DownloadThreadingManger(QThread):
                 db,
                 backup_collection,
                 logger,
-                self.progress_signal,
+                progress_signal=self.progress_signal,
             )
             success = self.info_getter.start_get_info()
             if success:
@@ -643,6 +643,7 @@ class AsyncDownloadThreadingManger(QThread):
             self.followings_recorder = infofetcher.FollowingsRecorder(
                 config_dict["cookies"], db, logger, self.progress_signal
             )
+            self.followings_recorder.set_proxies(('', ''))
             success = self.followings_recorder.following_recorder()
             if not success:
                 self.break_signal.emit()
@@ -659,7 +660,8 @@ class AsyncDownloadThreadingManger(QThread):
                 logger,
                 semaphore=2
             )
-            success = loop.run_until_complete(asyncio.create_task(self.info_getter.start_get_info_async()))
+            self.info_getter.set_proxies(('', ''))
+            success = loop.run_until_complete(asyncio.ensure_future(self.info_getter.start_get_info_async()))
             if success:
                 config_dict.update({"last_record_time": newtime})
                 pixiv_pyqt_tools.ConfigSetter.set_config(
