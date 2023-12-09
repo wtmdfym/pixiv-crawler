@@ -218,6 +218,7 @@ class ImageLoader(QRunnable):
             if pixmap.convertFromImage(image):
                 args = (0, pixmap)
             else:
+                os.remove(self.image_path)
                 args = (2, None)
         else:
             args = (3, None)

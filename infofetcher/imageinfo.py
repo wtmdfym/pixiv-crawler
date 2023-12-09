@@ -64,7 +64,8 @@ class InfoFetcher:
             if success:
                 return True
             else:
-                raise Exception("database backup error")
+                return False
+                # raise Exception("database backup error")
 
     async def record_infos_async(self) -> bool:
 
@@ -397,38 +398,38 @@ class InfoFetcher:
 
         return info
 
-    async def record_in_tags_async(self, tags) -> None:
+    async def record_in_tags_async(self, id: int, tags) -> None:
         self.tags_collection = self.db["All Tags"]
         for name, translate in tags.items():
-            earlier = await self.tags_collection.find_one({"name": name})
+            earlier = await self.tags_collection.find_one({'name': name})
             if earlier:
-                earlier_translate = earlier.get("translate")
+                workids = earlier.get("workids")
+                if workids:
+                    workids.append(id)
+                else:
+                    workids = [id]
+                works_count = earlier.get('works_count')+1
+                earlier_translate = earlier.get('translate')
                 if earlier_translate is None and translate:
                     await self.tags_collection.update_one(
-                        {"name": name}, {"$set": {"translate": translate}}
-                    )
+                        {"name": name}, {"$set": {"translate": translate, 'works_count': works_count, "workids": workids}})
                 elif earlier_translate and translate:
-                    if translate in earlier_translate.split("||"):
-                        pass
-                    else:
+                    if translate in earlier_translate.split('||'):
                         await self.tags_collection.update_one(
-                            {"name": name},
-                            {
-                                "$set": {
-                                    "translate": earlier_translate + "||" + translate
-                                }
-                            },
-                        )
-                works_number = earlier.get("works_number") + 1
-                b = await self.tags_collection.update_one(
-                    {"name": name}, {"$set": {"works_number": works_number}}
-                )
-                if not b:
-                    raise Exception(b)
+                            {"name": name}, {"$set": {'works_count': works_count, "workids": workids}})
+                    else:
+                        await self.tags_collection.update_one({"name": name},
+                                                              {"$set": {"translate": earlier_translate+'||'+translate,
+                                                                        'works_count': works_count, "workids": workids}})
+                elif (earlier_translate and translate) is None:
+                    await self.tags_collection.update_one(
+                        {"name": name}, {"$set": {'works_count': works_count, "workids": workids}})
+                else:
+                    print(id)
+                    return
             else:
                 await self.tags_collection.insert_one(
-                    {"name": name, "works_number": 1, "translate": translate}
-                )
+                    {'name': name, 'translate': translate, 'works_count': 1, "workids": [id]})
 
     async def record_info_mongodb_async(self, ids: dict, session: aiohttp.ClientSession, collection) -> None:
         """将图片详情信息保存在mongodb中"""
@@ -457,7 +458,7 @@ class InfoFetcher:
                     info.update(future)
                     res = await collection.insert_one(info)
                     if res:
-                        await self.record_in_tags_async(info.get("tags"))
+                        await self.record_in_tags_async(info.get("id"), info.get("tags"))
                     else:
                         self.logger.critical("记录tag失败")
                     # print(info)
@@ -482,7 +483,7 @@ class InfoFetcher:
                     info.update(future)
                     res = await collection.insert_one(info)
                     if res:
-                        await self.record_in_tags_async(info.get("tags"))
+                        await self.record_in_tags_async(info.get("id"), info.get("tags"))
                     else:
                         self.logger.critical("记录tag失败")
                     # print(info)
@@ -503,14 +504,18 @@ class InfoFetcher:
         names = await self.db.list_collection_names()
         for name in names:
             collection = self.db[name]
-            a = collection.find({"id": {"$exists": True}}, {"_id": 0})
-            async for docs in a:
-                if len(docs) >= 9:
-                    b = self.backup_collection.find_one({"id": docs.get("id")})
-                    if b:
-                        continue
-                    else:
-                        await self.backup_collection.insert_one(docs)
+            # 可不用
+            async with self.semaphore:
+                async for docs in collection.find({"id": {"$exists": True}}, {"_id": 0}):
+                    if not self.__event.is_set():
+                        return False
+                    if len(docs) >= 9:
+                        b = await self.backup_collection.find_one({"id": docs.get("id")})
+                        if b:
+                            continue
+                        else:
+                            await self.backup_collection.insert_one(docs)
+                            # print(c)
         self.logger.info("自动备份完成!")
         return True
 

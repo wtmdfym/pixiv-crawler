@@ -31,14 +31,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 import pixiv_pyqt_tools
-from GUI.widgets import ImageTableWidget, ScrollArea, ExtendedComboBox, ImageBox
+from GUI.widgets import ImageTableWidget, UserTableWidget, ScrollArea, ExtendedComboBox, ImageBox
 from GUI.tools import AsyncDownloadThreadingManger
 
 
 class MainTab(QWidget):
-    def __init__(self, config_dict: dict,  config_save_path, db,
+    def __init__(self, parent, config_dict: dict,  config_save_path, db,
                  backupcollection, asyncdb, asyncbackupcollection, logger) -> None:
-        super().__init__()
+        super().__init__(parent)
         self.config_dict = config_dict
         self.config_save_path = config_save_path
         self.db = db
@@ -164,8 +164,8 @@ class MainTab(QWidget):
 
 
 class SearchTab(QWidget):
-    def __init__(self, save_path: str, logger, backupcollection, show_image_callback, usethumbnail: bool = False):
-        super().__init__()
+    def __init__(self, parent, save_path: str, logger, backupcollection, show_image_callback, usethumbnail: bool = False):
+        super().__init__(parent)
         self.page = 1
         self.total_page = 1
         self.save_path = save_path
@@ -174,9 +174,10 @@ class SearchTab(QWidget):
         self.image_path = self.save_path + "picture/"
         self.default_width = 1220
         self.default_height = 700
-        self.initUI(backupcollection, show_image_callback, usethumbnail)
+        self.backup_collection = backupcollection
+        self.initUI(show_image_callback, usethumbnail)
 
-    def initUI(self, backupcollection, show_image_callback, usethumbnail):
+    def initUI(self, show_image_callback, usethumbnail):
         self.setGeometry(QRect(0, 0, self.default_width, self.default_height))
         self.gridLayout = QGridLayout(self)
         self.gridLayout.setContentsMargins(0, 0, 0, 0)
@@ -205,8 +206,8 @@ class SearchTab(QWidget):
         self.gridLayout.addWidget(self.imageinfoDisplayer, 3, 0, 1, 3)
         self.imagedisplatLayout = QVBoxLayout()
         self.images_tableWidget = ImageTableWidget(
-            self, self.save_path, self.logger, backupcollection,
-            self.update_image_info, show_image_callback, usethumbnail
+            self, self.save_path, self.logger, show_image_callback,
+            usethumbnail, update_info_callback=self.update_image_info
         )
         self.imagedisplatLayout.addWidget(self.images_tableWidget, 0)
         # self.gridLayout.addWidget(self.images_tableWidget, 0, 3, 2, 1)
@@ -265,10 +266,59 @@ class SearchTab(QWidget):
         )
 
     def search(self):
-        self.page, self.total_page = self.images_tableWidget.search(
-            self.searchEdit.text()
-        )
+        work_number = 0
+        self.images_tableWidget.image_datas.clear()
+        self.images_tableWidget.total_page = 1
+        # self.results = None
+        search_info = self.searchEdit.text()
+        if re.findall(r"\+", search_info):
+            and_search = []
+            for one_search in search_info.split("+"):
+                if re.search(r"\d{4,}", one_search):
+                    and_search.append({"userId": one_search})
+                else:
+                    and_search.append(
+                        {"tags." + one_search: {"$exists": "true"}})
+            self.results = self.backup_collection.find(
+                {"$and": and_search}).sort("id", -1)
+
+        elif re.findall(r"\,", search_info):
+            or_search = []
+            for one_search in search_info.split(","):
+                if re.search(r"\d{4,}", one_search):
+                    or_search.append({"userId": one_search})
+                else:
+                    or_search.append(
+                        {"tags." + one_search: {"$exists": "true"}})
+                self.results = self.backup_collection.find(
+                    {"$or": or_search}).sort("id", -1)
+
+        elif search_info:
+            one_search = {}
+            if re.search(r"\d{4,}", search_info):
+                one_search.update({"userId": search_info})
+            else:
+                one_search.update({"tags." + search_info: {"$exists": "true"}})
+            self.results = self.backup_collection.find(
+                one_search).sort("id", -1)
+
+        else:
+            self.results = self.backup_collection.find(
+                {'id': {"$exists": "true"}}).sort("id", -1)
+
+        for row in self.results:
+            self.images_tableWidget.image_datas.append(row)
+            work_number += 1
+
+        self.total_page = (
+            work_number - 1) // (self.images_tableWidget.rows * self.images_tableWidget.columns) + 1
         self.pageEdit.setMaximum(self.total_page)
+        self.images_tableWidget.page = 1
+        self.change_page(1)
+
+        # self.page, self.total_page = self.images_tableWidget.search(
+        #     self.searchEdit.text()
+        # )
         self.pageLabel.setText(str(self.page) + "/" + str(self.total_page))
 
     def update_image_info(self, image_info, image_url, image_path):
@@ -320,8 +370,8 @@ class SearchTab(QWidget):
 
 
 class TagsTab(QWidget):
-    def __init__(self, db, changetab, settext):
-        super().__init__()
+    def __init__(self, parent, db, changetab, settext):
+        super().__init__(parent)
         self.tags_collection = db["All Tags"]
         self.like_tag_collection = db["Like Tag"]
         self.dislike_tag_collection = db["Dislike Tag"]
@@ -399,12 +449,12 @@ class TagsTab(QWidget):
 
     def load_tags(self):
         tags = (
-            self.tags_collection.find({"works_number": {"$gt": 5}}, {"_id": 0})
-            .sort("works_number", -1)
+            self.tags_collection.find({"works_count": {"$gt": 5}}, {"_id": 0})
+            .sort("works_count", -1)
             .limit(500)
         )
         count = self.tags_collection.count_documents(
-            {"works_number": {"$gt": 5}}, limit=500
+            {"works_count": {"$gt": 5}}, limit=500
         )
         self.tags_tableWidget.setRowCount(count)
         row = 0
@@ -521,9 +571,9 @@ class TagsTab(QWidget):
         # print(findedtags)
 
 
-class UserTab(QWidget):
-    def __init__(self, logger, db, savepath, usethumbnail):
-        super().__init__()
+class UserTab1(QWidget):
+    def __init__(self, parent, logger, db, savepath, usethumbnail):
+        super().__init__(parent)
         self.default_width = 1220
         self.default_height = 700
         self.initUI(logger, db, savepath, usethumbnail)
@@ -536,9 +586,99 @@ class UserTab(QWidget):
         self.scrollArea.setObjectName("scrollArea")
 
 
+class UserTab(QWidget):
+    def __init__(self, parent, logger, db, savepath, usethumbnail):
+        super().__init__(parent)
+        self.default_width = 1220
+        self.default_height = 700
+        # 设置页码
+        self.pagesize = 4  # 每页显示四个作者的信息
+        self.page = 1
+        self.initUI(logger, db, savepath, usethumbnail)
+        # 获取作者信息
+        user_datas = []
+        following = db["All Followings"]
+        for one in following.find(
+            {"userId": {"$exists": "true"}}, {"_id": 0}
+        ):
+            user_datas.append(one)
+        self.total_page = (
+            following.count_documents(
+                {"userId": {"$exists": "true"}})
+            // self.pagesize
+            + 1
+        )
+        self.user_tableWidget.user_datas = user_datas
+        self.change_page(1)
+
+    def initUI(self, logger, db, savepath, usethumbnail):
+        self.setGeometry(QRect(0, 0, self.default_width, self.default_height))
+        self.gridLayout = QGridLayout(self)
+        self.gridLayout.setContentsMargins(0, 0, 0, 0)
+        # 作者信息显示控件
+        self.user_tableWidget = UserTableWidget(
+            self, savepath, logger, db, usethumbnail=usethumbnail)
+        self.gridLayout.addWidget(
+            self.user_tableWidget, 0, 0, Qt.AlignmentFlag.AlignHCenter)
+        # 翻页控件
+        self.pageLayout = QHBoxLayout()
+        self.prev_pageButton = QPushButton(parent=self)
+        self.prev_pageButton.setMaximumWidth(100)
+        self.prev_pageButton.clicked.connect(
+            lambda: self.change_page(page=self.page - 1)
+        )
+        self.pageLayout.addWidget(self.prev_pageButton, 0)
+        self.pageEdit = QSpinBox(parent=self)
+        self.pageEdit.setMaximumWidth(100)
+        self.pageEdit.setMinimum(1)
+        self.pageLayout.addWidget(self.pageEdit, 1)
+        self.pageLabel = QLabel(parent=self)
+        self.pageLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pageLabel.setMaximumWidth(100)
+        self.pageLayout.addWidget(self.pageLabel, 2)
+        self.jump_pageButton = QPushButton(parent=self)
+        self.jump_pageButton.setMaximumWidth(100)
+        self.jump_pageButton.clicked.connect(
+            lambda: self.change_page(page=self.pageEdit.value())
+        )
+        self.pageLayout.addWidget(self.jump_pageButton, 3)
+        self.next_pageButton = QPushButton(parent=self)
+        self.next_pageButton.setMaximumWidth(100)
+        self.next_pageButton.clicked.connect(
+            lambda: self.change_page(page=self.page + 1)
+        )
+        self.pageLayout.addWidget(self.next_pageButton, 4)
+        self.gridLayout.addLayout(
+            self.pageLayout, 1, 0, Qt.AlignmentFlag.AlignHCenter)
+
+    def retranslateUi(self):
+        _translate = QCoreApplication.translate
+        self.jump_pageButton.setText(_translate("MainWindow", "Jump"))
+        self.pageLabel.setText(_translate("MainWindow", "No Page"))
+        self.next_pageButton.setText(_translate("MainWindow", "Next Page"))
+        self.prev_pageButton.setText(_translate("MainWindow", "Prev Page"))
+
+    def update_info(self):
+        pass
+
+    def resizeEvent(self, a0) -> None:
+        # self.user_tableWidget.setFixedSize(self.width(), self.height() - 20)
+        return super().resizeEvent(a0)
+
+    def change_page(self, page):
+        if page == 0:
+            return
+        elif page > self.total_page:
+            return
+        self.page = page
+        self.pageEdit.setValue(self.page)
+        self.pageLabel.setText(str(page) + "/" + str(self.total_page))
+        self.user_tableWidget.change_page(page)
+
+
 class ConfigTab(QWidget):
-    def __init__(self, logger, config_dict: dict, config_save_path, db, reloadUI):
-        super().__init__()
+    def __init__(self, parent, logger, config_dict: dict, config_save_path, db, reloadUI):
+        super().__init__(parent)
         self.config_dict = config_dict
         self.config_save_path = config_save_path
         self.db = db
@@ -683,10 +823,14 @@ class ConfigTab(QWidget):
         _translate = QCoreApplication.translate
         self.pathLabel.setText(_translate("MainWindow", "save path:"))
         self.cookieLabel.setText(_translate("MainWindow", "cookies:"))
-        self.http_proxiesLabel.setText(_translate("MainWindow", "http proxies:"))
-        self.http_proxiesEdit.setPlaceholderText(_translate("MainWindow", "eg:http://localhost:1111"))
-        self.https_proxiesLabel.setText(_translate("MainWindow", "https proxies:"))
-        self.https_proxiesEdit.setPlaceholderText(_translate("MainWindow", "eg:https://162.144.1.241:1111"))
+        self.http_proxiesLabel.setText(
+            _translate("MainWindow", "http proxies:"))
+        self.http_proxiesEdit.setPlaceholderText(
+            _translate("MainWindow", "eg:http://localhost:1111"))
+        self.https_proxiesLabel.setText(
+            _translate("MainWindow", "https proxies:"))
+        self.https_proxiesEdit.setPlaceholderText(
+            _translate("MainWindow", "eg:https://162.144.1.241:1111"))
         self.enable_console_outputCheckBox.setText(
             _translate("MainWindow", "启用控制台输出"))
         self.enable_thumbnailCheckBox.setText(
@@ -820,7 +964,8 @@ class ConfigTab(QWidget):
         self.progressDialog.setWindowTitle("生成缩略图......")
         self.progressDialog.setFixedSize(500, 100)
         self.progressDialog.show()
-        self.t = self.GenerateThumbnail(self.config_dict["save_path"], self.db, self.logger)
+        self.t = self.GenerateThumbnail(
+            self.config_dict["save_path"], self.db, self.logger)
         self.t.progress_signal.connect(self.updateProgressDialog)
         self.progressDialog.canceled.connect(self.t.stop)
         self.progressDialog.destroyed.connect(self.t.stop)
@@ -916,16 +1061,186 @@ class ConfigTab(QWidget):
             self.ifstop = True
 
 
+class ImageTab(QWidget):
+    def __init__(self, parent, save_path: str, logger, image_data: dict, show_image_callback, usethumbnail: bool = False):
+        '''
+            image_data -> eg:{'_id': ObjectId('6569f5118b962c95d51e3cf9'),\
+                'type': 'illusts', 'id': 113867483, 'title': 'あさひに蟹縛り',\
+                'description': '(蟹縛りは)初投稿です。', 'tags': {'R-18': None, 'お兄ちゃんはおしまい': '别当欧尼酱了',\
+                '桜花あさひ': '樱花朝日', '猿轡': '猿辔', '拘束': '束缚', '緊縛': '紧缚', 'おもらし': '失禁', 'bondage': None,\
+                'gagged': None}, 'original_url': ['https://i.pximg.net/img-original/img/2023/12/01/21/30/47/113867483_p0.png',\
+                'https://i.pximg.net/img-original/img/2023/12/01/21/30/47/113867483_p1.png',\
+                'https://i.pximg.net/img-original/img/2023/12/01/21/30/47/113867483_p2.png'], 'userId': '17259031',\
+                'username': 'moegi', 'relative_path': ['picture/17259031/113867483_p0.png','picture/17259031/113867483_p1.png]}
+        '''
+        super().__init__(parent)
+        self.page = 1
+        self.logger = logger
+        self.default_width = 1220
+        self.default_height = 700
+        self.initUI(save_path, show_image_callback, usethumbnail)
+        self.retranslateUi()
+        self.total_page = (len(image_data.get("relative_path")) -
+                           1) // (self.images_tableWidget.rows * self.images_tableWidget.columns) + 1
+        self.pageEdit.setMaximum(self.total_page)
+        self.pageLabel.setText(str(self.page) + "/" + str(self.total_page))
+        self.images_tableWidget.image_datas = image_data
+        # 作品信息
+        id = image_data.get("id")
+        type = image_data.get("type")
+        title = image_data.get("title")
+        userid = image_data.get("userId")
+        username = image_data.get("username")
+        tags = image_data.get("tags")
+        description = image_data.get("description")
+        self.image_url = "https://www.pixiv.net/{}/{}".format(
+            image_data.get("type"), image_data.get("id"))
+        self.image_path = save_path + image_data.get("relative_path")[0]
+        info = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:\n{}\nDescription:\n{}"
+        info = info.format(id, type, title, userid,
+                           username, tags, description)
+        self.imageinfoDisplayer.setPlainText(info)
+        # 显示图片
+        self.images_tableWidget.update_image_new()
+
+    def initUI(self, save_path, show_image_callback, usethumbnail):
+        self.setGeometry(QRect(0, 0, self.default_width, self.default_height))
+        self.gridLayout = QGridLayout(self)
+        self.gridLayout.setContentsMargins(0, 0, 0, 0)
+        # 在浏览器和资源管理器中显示
+        self.show_in_browserButton = QPushButton(parent=self)
+        self.show_in_browserButton.clicked.connect(self.show_in_browser)
+        self.gridLayout.addWidget(self.show_in_browserButton, 0, 0, 1, 3)
+        self.show_in_resourceButton = QPushButton(parent=self)
+        self.show_in_resourceButton.clicked.connect(self.show_in_resource)
+        self.gridLayout.addWidget(self.show_in_resourceButton, 1, 0, 1, 3)
+        # 显示控件
+        self.imageinfoDisplayer = QTextBrowser(parent=self)
+        # self.imageinfoDisplayer.setObjectName("imageinfoDisplayer")
+        # self.imageinfoDisplayer.setFixedHeight(600)
+        self.gridLayout.addWidget(self.imageinfoDisplayer, 2, 0, 1, 3)
+        self.imagedisplatLayout = QVBoxLayout()
+        self.images_tableWidget = ImageTableWidget(
+            self, save_path, self.logger, show_image_callback, usethumbnail, one_work=True
+        )
+        self.imagedisplatLayout.addWidget(self.images_tableWidget, 0)
+        # self.gridLayout.addWidget(self.images_tableWidget, 0, 3, 2, 1)
+        # 翻页控件
+        self.pageLayout = QHBoxLayout()
+        self.prev_pageButton = QPushButton(parent=self)
+        self.prev_pageButton.setMaximumWidth(100)
+        self.prev_pageButton.clicked.connect(
+            lambda: self.change_page(page=self.page - 1)
+        )
+        self.pageLayout.addWidget(self.prev_pageButton, 0)
+        self.pageEdit = QSpinBox(parent=self)
+        self.pageEdit.setMaximumWidth(100)
+        self.pageEdit.setMinimum(1)
+        self.pageLayout.addWidget(self.pageEdit, 1)
+        self.pageLabel = QLabel(parent=self)
+        self.pageLabel.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.pageLabel.setMaximumWidth(100)
+        self.pageLayout.addWidget(self.pageLabel, 2)
+        self.jump_pageButton = QPushButton(parent=self)
+        self.jump_pageButton.setMaximumWidth(100)
+        self.jump_pageButton.clicked.connect(
+            lambda: self.change_page(page=self.pageEdit.value())
+        )
+        self.pageLayout.addWidget(self.jump_pageButton, 3)
+        self.next_pageButton = QPushButton(parent=self)
+        self.next_pageButton.setMaximumWidth(100)
+        self.next_pageButton.clicked.connect(
+            lambda: self.change_page(page=self.page + 1)
+        )
+        self.pageLayout.addWidget(self.next_pageButton, 4)
+        self.imagedisplatLayout.addLayout(self.pageLayout, 1)
+        self.gridLayout.addLayout(self.imagedisplatLayout, 0, 3, 5, 1)
+        # self.gridLayout.addLayout(self.pageLayout, 3, 3, 1, 1)
+
+    def retranslateUi(self):
+        _translate = QCoreApplication.translate
+        self.jump_pageButton.setText(_translate("MainWindow", "Jump"))
+        self.pageLabel.setText(_translate("MainWindow", "No Page"))
+        self.next_pageButton.setText(_translate("MainWindow", "Next Page"))
+        self.prev_pageButton.setText(_translate("MainWindow", "Prev Page"))
+        self.show_in_browserButton.setText(
+            _translate("MainWindow", "Show in browser"))
+        self.show_in_resourceButton.setText(
+            _translate("MainWindow", "Show in resource")
+        )
+
+    def show_in_browser(self):
+        import webbrowser
+        webbrowser.open(self.image_url)
+
+    def show_in_resource(self):
+        file = os.path.realpath(self.image_path)
+        # print(file)
+        if os.path.exists(file):
+            self.logger.info("文件路径:%s" % file)
+            os.system(f"explorer /select, {file}")
+        else:
+            # print("文件不存在:%s"%(file))
+            self.logger.warning("文件不存在:%s" % (file))
+
+    def change_page(self, page):
+        if page == 0:
+            return
+        elif page > self.total_page:
+            return
+        self.page = page
+        self.pageEdit.setValue(self.page)
+        self.pageLabel.setText(str(page) + "/" + str(self.total_page))
+        self.images_tableWidget.change_page(page)
+
+    def resizeEvent(self, a0) -> None:
+        new_width = self.width()
+        new_height = self.height()
+        width_ratio = new_width / self.default_width
+        height_ratio = new_height / self.default_height
+        self.images_tableWidget.img_width = int(
+            self.images_tableWidget.default_img_width * width_ratio
+        )
+        self.images_tableWidget.img_height = int(
+            self.images_tableWidget.default_img_height * height_ratio
+        )
+        self.images_tableWidget.resize(
+            self.images_tableWidget.img_width * self.images_tableWidget.columns + 10,
+            self.images_tableWidget.img_height * self.images_tableWidget.rows + 10,
+        )
+        return super().resizeEvent(a0)
+
+
 class OriginalImageTab(QWidget):
-    def __init__(self) -> None:
+    def __init__(self, image_info=None) -> None:
         super().__init__()
+        if image_info:
+            # self.info = image_info
+            if isinstance(image_info, str):
+                self.info = image_info
+            else:
+                id = image_info.get("id")
+                type = image_info.get("type")
+                title = image_info.get("title")
+                userid = image_info.get("userId")
+                username = image_info.get("username")
+                tags = image_info.get("tags")
+                description = image_info.get("description")
+                infos = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:\n{}\nDescription:\n{}"
+                self.info = infos.format(
+                    id, type, title, userid, username, tags, description)
+        else:
+            self.info = None
         self.initUI()
 
     def initUI(self):
-        self.gridLayout = QGridLayout(self)
-        self.gridLayout.setObjectName("gridLayout")
+        self.hboxLayout = QHBoxLayout(self)
+        if self.info:
+            self.infodisplater = QTextBrowser(self)
+            self.infodisplater.setPlainText(self.info)
+            self.hboxLayout.addWidget(self.infodisplater, 0)
         self.box = ImageBox()
-        self.gridLayout.addWidget(self.box, 0, 0, 1, 1)
+        self.hboxLayout.addWidget(self.box, 1)
 
     def open_image(self, img_name):
         """

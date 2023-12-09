@@ -26,14 +26,18 @@ from GUI.tools import ImageLoader
 
 
 class ImageTableWidget(QTableWidget):
-    def __init__(self, parent: QWidget, save_path, logger,
-                 backupcollection, callback, show_image_callback, usethumbnail: bool = False):
+    def __init__(self, parent: QWidget, save_path, logger, show_image_callback=None,
+                 usethumbnail: bool = False, one_work: bool = False, update_info_callback=None):
+        '''
+        image_datas:
+        '''
         super().__init__(parent)
         self.save_path = save_path
-        self.callback = callback
+        self.update_info_callback = update_info_callback
         self.show_image_callback = show_image_callback
         self.logger = logger
-        self.backup_collection = backupcollection
+        # 是否为单个作品
+        self.one_work = one_work
         # 设置图片宽高
         self.default_img_width = 240  # 320
         self.default_img_height = 300  # 360
@@ -74,7 +78,7 @@ class ImageTableWidget(QTableWidget):
         # 添加标签
         for i in range(self.rows):
             for j in range(self.columns):
-                label = QLabel()
+                label = QLabel(self)
                 # 设置对齐方式
                 label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 # QSS Qt StyleSheet
@@ -98,10 +102,13 @@ class ImageTableWidget(QTableWidget):
         # self.setShowGrid(False)
 
         # 事件绑定
-        self.itemSelectionChanged.connect(self.update_image_info)
+        if self.one_work:
+            pass
+        else:
+            self.itemSelectionChanged.connect(self.update_image_info)
         self.doubleClicked.connect(self.show_original_image)
-        self.image_datas = []
 
+    # 已弃用
     def search(self, search_info):
         self.image_datas.clear()
         self.work_number = 0
@@ -217,18 +224,26 @@ class ImageTableWidget(QTableWidget):
         else:
             return 3
 
-    def update_image_new(self):
+    def update_image_new(self) -> None:
         self.image_load_pool.clear()
-        self.images = self.image_datas[
-            (self.page - 1) * self.pagesize: self.page * self.pagesize
-        ]
+        if self.one_work:
+            self.images = self.image_datas.get("relative_path")[
+                (self.page - 1) * self.pagesize: self.page * self.pagesize
+            ]
+        else:
+            self.images = self.image_datas[
+                (self.page - 1) * self.pagesize: self.page * self.pagesize
+            ]
         for i in range(self.rows):
             for j in range(self.columns):
                 label = self.cellWidget(i, j)
                 try:
-                    relative_path = self.images[i * self.columns + j].get(
-                        "relative_path"
-                    )[0]
+                    if self.one_work:
+                        relative_path = self.images[i * self.columns + j]
+                    else:
+                        relative_path = self.images[i * self.columns + j].get(
+                            "relative_path"
+                        )[0]
                 except IndexError:
                     label.clear()
                     continue
@@ -266,16 +281,16 @@ class ImageTableWidget(QTableWidget):
         try:
             index = self.selectedIndexes()[0]
         except IndexError:
-            self.callback("", self.img_url, self.img_path)
+            self.update_info_callback("", self.img_url, self.img_path)
             return
         index = index.row() * self.columns + index.column()
         try:
             result = self.images[index]
         except IndexError:
-            self.callback("", "", "")
+            self.update_info_callback("", "", "")
             return
         except AttributeError:
-            self.callback("", "", "")
+            self.update_info_callback("", "", "")
             return
         id = result.get("id")
         type = result.get("type")
@@ -287,8 +302,8 @@ class ImageTableWidget(QTableWidget):
         self.img_url = "https://www.pixiv.net/artworks/" + str(id)
         self.img_path = result.get("relative_path")[0]
 
-        infos = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:{}\nDescription:\n{}"
-        self.callback(
+        infos = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:\n{}\nDescription:\n{}"
+        self.update_info_callback(
             infos.format(id, type, title, userid, username, tags, description),
             self.img_url,
             self.img_path,
@@ -306,9 +321,21 @@ class ImageTableWidget(QTableWidget):
             return
         except AttributeError:
             return
-        id = result.get("id")
-        img_paths = result.get("relative_path")
-        self.show_image_callback(id, img_paths)
+        if self.one_work:
+            id = self.image_datas.get("id")
+            type = self.image_datas.get("type")
+            title = self.image_datas.get("title")
+            userid = self.image_datas.get("userId")
+            username = self.image_datas.get("username")
+            tags = self.image_datas.get("tags")
+            description = self.image_datas.get("description")
+            infos = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:\n{}\nDescription:\n{}"
+            infos = infos.format(id, type, title, userid,
+                                 username, tags, description)
+            result = (id, result, infos)
+            self.show_image_callback(result)
+        else:
+            self.show_image_callback(result)
 
     def change_page(self, page):
         self.page = page
@@ -317,6 +344,244 @@ class ImageTableWidget(QTableWidget):
         self.update_image_new()
 
     def resizeEvent(self, e) -> None:
+        return super().resizeEvent(e)
+        # 设置单元格宽高
+        for i in range(self.rows):  # 让行高和图片相同
+            self.setRowHeight(i, self.img_height)
+        for i in range(self.columns):  # 让列宽和图片相同
+            self.setColumnWidth(i, self.img_width)
+
+
+class UserTableWidget(QTableWidget):
+    def __init__(self, parent: QWidget, save_path, logger, db, show_image_callback=None,
+                 usethumbnail: bool = False, update_info_callback=None):
+        '''
+        image_datas:
+        '''
+        super().__init__(parent)
+        self.save_path = save_path
+        self.update_info_callback = update_info_callback
+        self.show_image_callback = show_image_callback
+        self.db = db
+        self.logger = logger
+        # 设置图片宽高
+        self.default_img_width = 200  # 320
+        self.default_img_height = 160  # 360
+        self.info_width = 240
+        self.img_width = 200
+        self.img_height = 160
+        # 设置行数和列数
+        self.rows = 4
+        self.columns = 6
+        self.setRowCount(self.rows)
+        self.setColumnCount(self.columns)
+        # 设置大小
+        self.setFixedSize(
+            self.info_width + self.default_img_width * self.columns + 10,
+            self.default_img_height * self.rows + 10,
+        )
+        # 设置页码
+        self.pagesize = 4  # 每页显示四个作者的信息
+        self.page = 1
+        # 是否使用缩略图
+        self.use_thumbnail = usethumbnail
+        # 初始化UI界面
+        self.initUI()
+        # 开启线程池
+        self.image_load_pool = QThreadPool()
+        self.image_load_pool.setMaxThreadCount(4)
+
+    def initUI(self):
+        # 设置单元格宽高
+        for i in range(self.rows):  # 让行高和图片相同
+            self.setRowHeight(i, self.img_height)
+        self.setColumnWidth(0, self.info_width)
+        for i in range(1, self.columns):  # 让列宽和图片相同
+            self.setColumnWidth(i, self.img_width)
+
+        # 作者列表
+        self.user_datas = []
+
+        # 添加标签
+        for i in range(self.rows):
+            for j in range(self.columns):
+                if j == 0:
+                    textbrowser = QTextBrowser(self)
+                    textbrowser.setFixedSize(self.info_width, self.img_height)
+                    self.setCellWidget(i, j, textbrowser)
+                else:
+                    label = QLabel(self)
+                    # 设置对齐方式
+                    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                    # QSS Qt StyleSheet
+                    label.setStyleSheet("QLabel{margin:5px};")
+                    # 设置与宽高
+                    label.setFixedSize(self.img_width, self.img_height)
+                    # 添加到tablewidget
+                    self.setCellWidget(i, j, label)
+
+        # 禁止编辑
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        # 设置单行选择
+        self.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectRows)
+        # 自定义表头和第一列，隐藏显示
+        self.horizontalHeader().setVisible(False)
+        self.verticalHeader().setVisible(False)
+        # 隐藏表格线
+        # self.setShowGrid(False)
+
+        # 事件绑定
+        self.doubleClicked.connect(self.show_original_image)
+
+    # 已弃用
+    def search(self, search_info):
+        self.image_datas.clear()
+        self.work_number = 0
+        self.page = 1
+        self.total_page = 1
+        # self.results = None
+        if re.findall(r"\+", search_info):
+            and_search = []
+            for one_search in search_info.split("+"):
+                if re.search(r"\d{4,}", one_search):
+                    and_search.append({"userId": one_search})
+                else:
+                    and_search.append(
+                        {"tags." + one_search: {"$exists": "true"}})
+            self.results = self.backup_collection.find(
+                {"$and": and_search}).sort("id", -1)
+
+        elif re.findall(r"\,", search_info):
+            or_search = []
+            for one_search in search_info.split(","):
+                if re.search(r"\d{4,}", one_search):
+                    or_search.append({"userId": one_search})
+                else:
+                    or_search.append(
+                        {"tags." + one_search: {"$exists": "true"}})
+                self.results = self.backup_collection.find(
+                    {"$or": or_search}).sort("id", -1)
+
+        elif search_info:
+            one_search = {}
+            if re.search(r"\d{4,}", search_info):
+                one_search.update({"userId": search_info})
+            else:
+                one_search.update({"tags." + search_info: {"$exists": "true"}})
+            self.results = self.backup_collection.find(
+                one_search).sort("id", -1)
+
+        else:
+            self.results = self.backup_collection.find(
+                {'id': {"$exists": "true"}}).sort("id", -1)
+
+        for row in self.results:
+            self.image_datas.append(row)
+            self.work_number += 1
+
+        self.total_page = (self.work_number -
+                           1) // (self.rows * self.columns) + 1
+        # print("总页数:%d"%(self.total_page))
+        """
+        #self.page_number = len(self.work_ids)//self.pagesize
+        #if len(self.work_ids)%self.pagesize !=0:
+        #    self.page_number+=1
+        self.page_number = self.work_number//self.pagesize
+        if self.work_number%self.pagesize !=0:
+            self.page_number+=1
+        print(self.page_number)
+        """
+        self.page = 1
+        self.update_image_new()
+        return self.page, self.total_page
+
+    def update_user_info(self) -> None:
+        self.image_load_pool.clear()
+        self.users = self.user_datas[
+            (self.page - 1) * self.pagesize: self.page * self.pagesize
+        ]
+        for i in range(self.rows):
+            textbrowser = self.cellWidget(i, 0)
+            try:
+                user_info = self.users[i]
+            except IndexError:
+                textbrowser.clear()
+                for j in range(1, self.columns):
+                    self.cellWidget(i, j).clear()
+                continue
+            info = "userName:{}\nuserId:{}\nuserComment:{}".format(
+                user_info["userName"], user_info["userId"], user_info.get(
+                    "userComment")
+            )
+            textbrowser.setPlainText(info)
+            collection = self.db[user_info["userName"]]
+            images = collection.find({"id": {"$exists": "true"}}, {
+                                     "_id": 0, "relative_path": 1}).sort("id", -1).limit(self.columns)
+            for j in range(1, self.columns):
+                label = self.cellWidget(i, j)
+                try:
+                    relative_path = images[j - 1].get("relative_path")[0]
+                except IndexError:
+                    label.clear()
+                    continue
+                if self.use_thumbnail:
+                    relative_path = re.search(
+                        "(?<=picture/).*", relative_path).group()
+                    path = self.save_path + "thumbnail/" + relative_path
+                else:
+                    path = self.save_path + relative_path
+                index = (i, j)
+                imageloader = ImageLoader(
+                    self, self.img_width, self.img_height, index=index, image_path=path)
+                self.image_load_pool.start(imageloader)
+
+    @pyqtSlot(tuple, object)
+    def set_image(self, index, args):
+        """
+        设置ImageLoader返回的图片(槽函数)
+        :param index: 图片索引
+        :param args: 图片加载代码以及加载的Qpixmap格式图片
+        :return:
+        """
+        label = self.cellWidget(index[0], index[1])
+        code = args[0]
+        pixmap = args[1]
+        if code == 2:
+            self.logger.warning("加载图片失败!")
+        elif code == 3:
+            label.setText("Not download")
+        elif code == 0:
+            label.setPixmap(pixmap)
+        # QApplication.processEvents()
+
+    def show_original_image(self):
+        try:
+            index = self.selectedIndexes()[0]
+        except IndexError:
+            return
+        row = index.row()
+        try:
+            result = self.users[row]
+        except IndexError:
+            return
+        except AttributeError:
+            return
+        print(result)
+        # self.show_image_callback(result)
+
+    def change_page(self, page):
+        self.page = page
+        # 清除选中
+        # self.clearSelection()
+        self.update_user_info()
+
+    def resizeEvent(self, e) -> None:
+        self.setFixedSize(
+            self.info_width + self.default_img_width * self.columns + 10,
+            self.default_img_height * self.rows + 10,
+        )
         return super().resizeEvent(e)
         # 设置单元格宽高
         for i in range(self.rows):  # 让行高和图片相同
