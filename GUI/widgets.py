@@ -7,20 +7,27 @@ from PyQt6.QtCore import (
     pyqtSlot,
     QThreadPool,
     QPoint,
+    pyqtSignal,
 )
-from PyQt6.QtGui import QImage, QPixmap, QPainter
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QAction, QCursor
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
-    QCompleter,
+    QGridLayout,
     QHBoxLayout,
+    QVBoxLayout,
     QLabel,
-    QScrollArea,
+    QLineEdit,
+    QPushButton,
     QTableWidget,
     QTextBrowser,
-    QVBoxLayout,
     QWidget,
+    QCompleter,
+    QScrollArea,
+    QMenu,
+    QDialog,
 )
 from GUI.tools import ImageLoader
 
@@ -59,6 +66,10 @@ class ImageTableWidget(QTableWidget):
         self.page = 1
         # 是否使用缩略图
         self.use_thumbnail = usethumbnail
+        # 右键菜单
+        self.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)  # 允许右键产生子菜单
+        self.customContextMenuRequested.connect(self.menu)  # 右键菜单
         # 初始化UI界面
         self.initUI()
         # 开启线程池
@@ -350,6 +361,24 @@ class ImageTableWidget(QTableWidget):
             self.setRowHeight(i, self.img_height)
         for i in range(self.columns):  # 让列宽和图片相同
             self.setColumnWidth(i, self.img_width)
+
+    def menu(self, pos):
+        """
+        :return:
+        """
+        menu = QMenu()  # 实例化菜单
+        item1 = menu.addAction(u"清除")
+        # item2 = menu.addAction(u"拷贝")
+        # item3 = menu.addAction(u"粘贴")
+        action = menu.exec(self.mapToGlobal(pos))
+        if action == item1:
+            index = self.selectedIndexes()[0]
+            index = index.row() * self.columns + index.column()
+            print(index)
+        # elif action == item2:
+        #     print("拷贝选中内容")
+        # elif action == item3:
+        #     print("粘贴拷贝内容")
 
 
 class UserTableWidget(QTableWidget):
@@ -845,6 +874,9 @@ class ImageBox(QWidget):
         self.end_pos = None
         self.left_click = False
         self.scale = 1
+        # 使用customContextMenuRequested 必须要设置这行代码
+        self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.customContextMenuRequested.connect(self.showMenu)
 
     def set_image(self, img_path):
         """
@@ -912,3 +944,145 @@ class ImageBox(QWidget):
         """
         if e.button() == Qt.MouseButton.LeftButton:
             self.left_click = False
+
+    def showMenu(self, pos):
+        self.menu = QMenu(self)
+        self.menu.addAction("原始大小")
+        self.menu.move(QCursor.pos())
+        self.menu.show()
+
+
+class SearchDialog(QDialog):
+    """
+    根据pixiv搜索界面搭建
+    """
+    get_search_criteria_singal = pyqtSignal(dict)
+
+    def __init__(self, parent):
+        super(SearchDialog, self).__init__(parent=parent)
+        self.initUi()
+        self.detailsettingButton.clicked.connect(self.set_detail_settings)
+        self.applyButton.clicked.connect(self.get_search_criteria)
+        # 新建的窗口始终位于当前屏幕的最前面
+        # self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+        # 阻塞父类窗口不能点击
+        self.setWindowModality(Qt.WindowModality.ApplicationModal)
+
+    def initUi(self):
+        self.setWindowTitle("搜索条件")
+        self.setGeometry(400, 600, 300, 260)
+        self.setMaximumSize(400, 600)
+        mainLayout = QGridLayout()
+        self.setLayout(mainLayout)
+        # 关键字
+        self.keywordLabel = QLabel(self)
+        self.keywordLabel.setText("关键词")
+        mainLayout.addWidget(self.keywordLabel, 0, 0, 1,
+                             1, Qt.AlignmentFlag.AlignLeft)
+        self.detailsettingButton = QPushButton(self)
+        self.detailsettingButton.setText("详细设置")
+        mainLayout.addWidget(self.detailsettingButton, 0, 1, 1,
+                             1, Qt.AlignmentFlag.AlignRight)
+        self.keywordEdit = QLineEdit(self)
+        self.keywordEdit.setPlaceholderText("输入搜索关键词")
+        mainLayout.addWidget(self.keywordEdit, 1, 0, 1, 2)
+        # 检索范围
+        self.worktypeComboBox = QComboBox(self)
+        worktypelist = ["插画、漫画、动图(动态漫画)", "插画、动图", "插画", "漫画", "动图"]
+        self.worktypeComboBox.addItems(worktypelist)
+        mainLayout.addWidget(self.worktypeComboBox, 2, 0, 1, 2)
+        self.searchtypeComboBox = QComboBox(self)
+        searchtypelist = ["标签(部分一致)", "标签(完全一致)", "标题、说明文字"]
+        self.searchtypeComboBox.addItems(searchtypelist)
+        mainLayout.addWidget(self.searchtypeComboBox, 3, 0, 1, 2)
+        # 时间
+
+        # 其他
+        # 整合相同作者的作品
+        self.integrateworkCheckBox = QCheckBox(self)
+        self.integrateworkCheckBox.setText("整合相同作者的作品")
+        mainLayout.addWidget(self.integrateworkCheckBox, 4, 0, 1, 2)
+        # 清空检索条件
+
+        # 应用按钮
+        self.applyButton = QPushButton(self)
+        self.applyButton.setText("应用")
+        mainLayout.addWidget(self.applyButton, 5, 0, 1, 2)
+
+    class DetailSetting(QDialog):
+        get_keywords_criteria_singal = pyqtSignal(dict)
+
+        def __init__(self, parent, prekeywords: str):
+            super().__init__(parent=parent)
+            self.initUi(prekeywords)
+            self.applyButton.clicked.connect(self.get_keywords_criteria)
+            # 新建的窗口始终位于当前屏幕的最前面
+            # self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+            # 阻塞父类窗口不能点击
+            self.setWindowModality(Qt.WindowModality.ApplicationModal)
+
+        def initUi(self, prekeywords):
+            self.setWindowTitle("详细设置")
+            self.setGeometry(400, 300, 300, 260)
+            self.setMaximumSize(400, 300)
+            mainLayout = QGridLayout()
+            self.setLayout(mainLayout)
+            # 关键词
+            self.noticeLabel = QLabel(self)
+            self.noticeLabel.setText("用空格键将多个关键词隔开")
+            mainLayout.addWidget(self.noticeLabel, 0, 0, 1, 1)
+            self.allkeywordLabel = QLabel(self)
+            self.allkeywordLabel.setText("含有全部关键词")
+            mainLayout.addWidget(self.allkeywordLabel, 1, 0, 1, 1)
+            self.allkeywordEdit = QLineEdit(self)
+            self.allkeywordEdit.setPlaceholderText("添加关键词")
+            if prekeywords:
+                self.allkeywordEdit.setText(prekeywords)
+            mainLayout.addWidget(self.allkeywordEdit, 2, 0, 1, 1)
+            self.somekeywordLabel = QLabel(self)
+            self.somekeywordLabel.setText("含有某个关键词")
+            mainLayout.addWidget(self.somekeywordLabel, 3, 0, 1, 1)
+            self.somekeywordEdit = QLineEdit(self)
+            self.somekeywordEdit.setPlaceholderText("添加关键词")
+            mainLayout.addWidget(self.somekeywordEdit, 4, 0, 1, 1)
+            self.nokeywordLabel = QLabel(self)
+            self.nokeywordLabel.setText("不含有关键词")
+            mainLayout.addWidget(self.nokeywordLabel, 5, 0, 1, 1)
+            self.nokeywordEdit = QLineEdit(self)
+            self.nokeywordEdit.setPlaceholderText("添加关键词")
+            mainLayout.addWidget(self.nokeywordEdit, 6, 0, 1, 1)
+            # 应用按钮
+            self.applyButton = QPushButton(self)
+            self.applyButton.setText("应用")
+            mainLayout.addWidget(self.applyButton, 7, 0, 1, 1)
+
+        def get_keywords_criteria(self):
+            keywords_criteria = {}
+            keywords_criteria["all"] = self.allkeywordEdit.text()
+            keywords_criteria["some"] = self.somekeywordEdit.text()
+            keywords_criteria["no"] = self.nokeywordEdit.text()
+            self.get_keywords_criteria_singal.emit(keywords_criteria)
+            self.close()
+
+    def set_detail_settings(self):
+        detailsettingwin = self.DetailSetting(self, self.keywordEdit.text())
+        detailsettingwin.get_keywords_criteria_singal.connect(
+            self.get_keywords_criteria)
+        detailsettingwin.show()
+
+    @pyqtSlot(dict)
+    def get_keywords_criteria(self, keywords_criteria):
+        self.keywords_criteria = keywords_criteria
+        # self.keywordEdit.setText(str(keywords_criteria))
+
+    def get_search_criteria(self):
+        search_criteria = {}
+        if self.keywords_criteria:
+            search_criteria["keywords"] = self.keywords_criteria
+        else:
+            search_criteria["keywords"] = self.keywordEdit.text()
+        search_criteria["worktype"] = self.worktypeComboBox.currentText()
+        search_criteria["searchtype"] = self.searchtypeComboBox.currentText()
+        search_criteria["integratework"] = self.integrateworkCheckBox.isChecked()
+        self.get_search_criteria_singal.emit(search_criteria)
+        self.close()

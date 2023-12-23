@@ -10,7 +10,7 @@ from PyQt6.QtCore import (
     QRect,
     Qt,
 )
-from PyQt6.QtGui import QImageReader, QFont
+from PyQt6.QtGui import QImageReader, QFont, QAction, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -21,13 +21,19 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     # QTabBar,
     QWidget,
+    QSystemTrayIcon,
 )
 
 import pixiv_pyqt_tools
-from GUI.tabs import MainTab, SearchTab, TagsTab, UserTab, ConfigTab
+# from GUI.widgets import
+from GUI.tabs import MainTab, SearchTab, TagsTab, UserTab, ConfigTab, ImageTab, OriginalImageTab
 
 # 日志信息
 logging.basicConfig(level=logging.INFO)
+# logging.basicConfig(
+#     format="%(levelname)s [%(asctime)s] %(name)s - %(message)s",
+#     datefmt="%Y-%m-%d %H:%M:%S",
+#     level=logging.DEBUG)
 # logger = logging.getLogger('basic_logger')
 # logger.propagate = False
 formatter = logging.Formatter("%(asctime)s : [%(levelname)s] - %(message)s")
@@ -364,22 +370,21 @@ class Ui_MainWindow(object):
         logger.addHandler(console_handler)
 
     def creat_image_tab(self, image_data: dict | tuple):
-        import GUI.tabs
         # print(image_data)
         if isinstance(image_data, dict):
             id = image_data.get("id")
             if len(image_data.get("relative_path")) == 1:
-                tab = GUI.tabs.OriginalImageTab(image_data)
+                tab = OriginalImageTab(image_data)
                 tab.open_image(
                     self.config_dict["save_path"]+image_data.get("relative_path")[0])
             else:
-                tab = GUI.tabs.ImageTab(self.MainWindow, self.config_dict["save_path"], logger, image_data,
-                                        self.creat_image_tab, self.config_dict["use_thumbnail"])
+                tab = ImageTab(self.MainWindow, self.config_dict["save_path"], logger, image_data,
+                               self.creat_image_tab, self.config_dict["use_thumbnail"])
             index = self.tabWidget.insertTab(2, tab, str(id))
         else:
             id = image_data[0]
             img_path = image_data[1]
-            tab = GUI.tabs.OriginalImageTab()   # image_data[2]
+            tab = OriginalImageTab()   # image_data[2]
             tab.open_image(self.config_dict["save_path"]+img_path)
             index = self.tabWidget.insertTab(self.tab_count - 3, tab, str(id))
         self.tabWidget.setCurrentIndex(index)
@@ -431,6 +436,7 @@ class MainWindow(QMainWindow):
     def __init__(self, scaleRate):
         super().__init__()
         self.setObjectName("MainWindow")
+        self.setWindowTitle("Pixiv Crawler")
         # 初始化设置信息
         self.config_save_path = os.path.join(
             os.path.abspath(os.path.dirname(__file__)), "config.json"
@@ -468,11 +474,11 @@ class MainWindow(QMainWindow):
                 height,
             )
         )
-
-        self.setWindowTitle("Pixiv Crawler")
         # 设置图片最大大小
         QImageReader.setAllocationLimit(256)
+        self.setupUi()
 
+    def setupUi(self):
         # Tab数量
         self.tab_count = 5
         # 初始化tabWidget
@@ -525,17 +531,19 @@ class MainWindow(QMainWindow):
         self.tabWidget.addTab(self.tab_4, "")
         # 设置主窗口
         self.setCentralWidget(self.centralwidget)
+        # 设置菜单栏
         self.menubar = QMenuBar(parent=self)
         self.menubar.setGeometry(QRect(0, 0, 768, 22))
         self.menubar.setObjectName("menubar")
         self.menuHelp = QMenu(parent=self.menubar)
         self.menuHelp.setObjectName("menuHelp")
         self.setMenuBar(self.menubar)
+        # 设置状态栏
         self.statusbar = QStatusBar(parent=self)
         self.statusbar.setObjectName("statusbar")
         self.setStatusBar(self.statusbar)
         self.menubar.addAction(self.menuHelp.menuAction())
-
+        # 显示文字
         self.retranslateUi()
         self.tabWidget.setCurrentIndex(1)
         # self.statusbar.showMessage
@@ -627,11 +635,11 @@ class MainWindow(QMainWindow):
         """
         # 重新加载窗口
         self.destroy(True, True)
-        self.setupUi(self)
+        self.setupUi()
         # 重新设置logger
         logger = MyLogging()
         logger.init(
-            ui.config_dict["enable_console_output"], ui.tab.infodisplayer)
+            self.config_dict["enable_console_output"], self.tab.infodisplayer)
         logger.addHandler(console_handler)
 
     def creat_image_tab(self, image_data: dict | tuple):
@@ -665,6 +673,54 @@ class MainWindow(QMainWindow):
         self.tab_count -= 1
 
 
+class TrayIcon(QSystemTrayIcon):
+    def __init__(self, MainWindow, parent=None):
+        super(TrayIcon, self).__init__(parent)
+        self.ui = MainWindow
+        self.createMenu()
+
+    def createMenu(self):
+        self.menu = QMenu()
+        self.showAction1 = QAction("启动", self, triggered=self.show_window)
+        self.quitAction = QAction("退出", self, triggered=self.quit)
+
+        self.menu.addAction(self.showAction1)
+        self.menu.addAction(self.quitAction)
+        self.setContextMenu(self.menu)
+
+        # 设置图标
+        self.setIcon(QIcon(
+            "pixiv-crawler/gui.py"))
+
+        # 把鼠标点击图标的信号和槽连接
+        self.activated.connect(self.onIconClicked)
+
+    def show_window(self):
+        # 若是最小化，则先正常显示窗口，再变为活动窗口（暂时显示在最前面）
+        self.ui.showNormal()
+        self.ui.activateWindow()
+
+    def quit(self):
+        pass
+        # qApp.quit()
+
+    # 鼠标点击icon传递的信号会带有一个整形的值，1是表示单击右键，2是双击，3是单击左键，4是用鼠标中键点击
+    def onIconClicked(self, reason):
+        if reason == 2 or reason == 3:
+            # self.showMessage("Message", "skr at here", self.icon)
+            if self.ui.isMinimized() or not self.ui.isVisible():
+                # 若是最小化，则先正常显示窗口，再变为活动窗口（暂时显示在最前面）
+                self.ui.showNormal()
+                self.ui.activateWindow()
+
+                self.ui.show()
+            else:
+                # 若不是最小化，则最小化
+                self.ui.showMinimized()
+
+                self.ui.show()
+
+
 if __name__ == "__main__":
     # 解决图片在不同分辨率显示模糊问题
     QApplication.setHighDpiScaleFactorRoundingPolicy(
@@ -689,11 +745,15 @@ if __name__ == "__main__":
     # font.setFamily("SimSun")  # 宋体
     main_window.setFont(font)
     # main_window = QMainWindow()
-    ui = Ui_MainWindow()
+    # ui = Ui_MainWindow()
     # ui.setupUi(main_window)
     # logger.init(ui.config_dict["enable_console_output"], ui.tab.infodisplayer)
     logger.init(
         main_window.config_dict["enable_console_output"], main_window.tab.infodisplayer)
     logger.addHandler(console_handler)
+    main_window.setWindowFlags(Qt.WindowType.Window)
+    # 显示一个非模式的对话框，用户可以随便切窗口，.exec()是模式对话框，用户不能随便切
+    # ti = TrayIcon(main_window)
+    # ti.show()
     main_window.show()  # 显示主窗口
     sys.exit(app.exec())  # 在主线程中退出

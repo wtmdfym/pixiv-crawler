@@ -136,7 +136,7 @@ class AsyncDownloadThreadingManger(QThread):
             # 获取关注的作者的信息
             if self.ifstop:
                 return
-            self.info_getter = infofetcher.InfoGetter(
+            self.info_getter = infofetcher.InfoFetcherHttpx(
                 self.config_dict["cookies"],
                 self.config_dict["download_type"],
                 self.asyncdb,
@@ -146,7 +146,7 @@ class AsyncDownloadThreadingManger(QThread):
             )
             self.info_getter.set_proxies(proxies)
             success = loop.run_until_complete(asyncio.ensure_future(
-                self.info_getter.start_get_info_async()))
+                self.info_getter.start_get_info()))
             if success:
                 self.config_dict.update({"last_record_time": newtime})
                 pixiv_pyqt_tools.ConfigSetter.set_config(
@@ -157,6 +157,7 @@ class AsyncDownloadThreadingManger(QThread):
         # 下载作品
         if self.ifstop:
             return
+        '''
         self.downloader = downloader.ThreadpoolDownloader(
             self.config_dict["save_path"],
             self.config_dict["cookies"],
@@ -167,7 +168,16 @@ class AsyncDownloadThreadingManger(QThread):
         )
         self.downloader.set_proxies(proxies)
         self.downloader.start_following_download()
-        # loop.run_until_complete(asyncio.ensure_future(self.downloader.start_following_download()))
+        '''
+        self.downloader = downloader.AsyncioDownloaderHttpx(
+            self.config_dict["save_path"],
+            self.config_dict["cookies"],
+            self.config_dict["download_type"],
+            self.config_dict["semaphore"],
+            self.asyncbackup_collection,
+            self.logger,
+        )
+        loop.run_until_complete(asyncio.ensure_future(self.downloader.start_following_download()))
         del self.downloader
         self.break_signal.emit()
 

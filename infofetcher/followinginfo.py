@@ -18,7 +18,7 @@ class FollowingsRecorder:
         progress_signal: The pyqtSignal of QProgressBar
         headers: The headers when sending a HTTP request to pixiv
     """
-    __version = ''
+    __version = '54b602d334dbd7fa098ee5301611eda1776f6f39'
     __proxies = {'http': 'http://localhost:1111',
                  'https': 'http://localhost:1111'}
     __event = threading.Event()
@@ -147,7 +147,7 @@ class FollowingsRecorder:
                     "recording:{}".format(
                         {"userId": userId, "userName": userName})
                 )
-                result = self.followings_collection.insert_one(
+                result = followings_collection.insert_one(
                     {"userId": userId, "userName": userName,
                         "userComment": userComment}
                 )

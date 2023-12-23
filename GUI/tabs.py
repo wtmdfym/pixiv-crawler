@@ -31,7 +31,14 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 import pixiv_pyqt_tools
-from GUI.widgets import ImageTableWidget, UserTableWidget, ScrollArea, ExtendedComboBox, ImageBox
+from GUI.widgets import (
+    ImageTableWidget,
+    UserTableWidget,
+    ScrollArea,
+    ExtendedComboBox,
+    ImageBox,
+    SearchDialog
+)
 from GUI.tools import AsyncDownloadThreadingManger
 
 
@@ -185,11 +192,15 @@ class SearchTab(QWidget):
         # 搜索控件
         self.searchEdit = QLineEdit(parent=self)
         self.searchEdit.setObjectName("searchEdit")
-        self.gridLayout.addWidget(self.searchEdit, 0, 0, 1, 2)
+        self.gridLayout.addWidget(self.searchEdit, 0, 0, 1, 1)
         self.search_imageButton = QPushButton(parent=self)
         self.search_imageButton.setObjectName("search_imageButton")
         self.search_imageButton.clicked.connect(self.search)
-        self.gridLayout.addWidget(self.search_imageButton, 0, 2, 1, 1)
+        self.gridLayout.addWidget(self.search_imageButton, 0, 1, 1, 1)
+        self.search_typeButton = QPushButton(parent=self)
+        self.search_typeButton.setObjectName("search_typeButton")
+        self.search_typeButton.clicked.connect(self.set_search_type)
+        self.gridLayout.addWidget(self.search_typeButton, 0, 2, 1, 1)
         # 在浏览器和资源管理器中显示
         self.show_in_browserButton = QPushButton(parent=self)
         self.show_in_browserButton.setObjectName("show_in_browserButton")
@@ -320,6 +331,16 @@ class SearchTab(QWidget):
         #     self.searchEdit.text()
         # )
         self.pageLabel.setText(str(self.page) + "/" + str(self.total_page))
+
+    @pyqtSlot(dict)
+    def make_search_criteria(self, search_criteria):
+        print(search_criteria)
+
+    def set_search_type(self):
+        self.set_search_criteria_win = SearchDialog(self.parent())
+        self.set_search_criteria_win.get_search_criteria_singal.connect(
+            self.make_search_criteria)
+        self.set_search_criteria_win.show()
 
     def update_image_info(self, image_info, image_url, image_path):
         self.image_url, self.image_path = image_url, image_path
