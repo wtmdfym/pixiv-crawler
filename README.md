@@ -17,5 +17,5 @@ A web crawler of pixiv.
   - [x] 作者详情浏览器
   - [x] 设置
   - [x] 使用MongoDB储存数据
-  - [x] 大图浏览器50%
-  - [ ] css/qss样式
+  - [x] 大图浏览器
+  - [ ] qss样式
