@@ -114,8 +114,10 @@ class DownloaderHttpx:
             if doc.get("failcode"):
                 continue
             if not self.download_type.get("get" + doc.get("type")):
-                self.logger.warning("作品%s不在下载类型%s中" %
-                                    (doc.get("id"), "get" + doc.get("type")))
+                if not self.download_type.get("get" + doc.get("type") + "s"):
+                    self.logger.warning("作品%s不在下载类型%s中" %
+                                        (doc.get("id"), "get" + doc.get("type")))
+                    continue
                 # print(doc)
             id = doc.get("id")
             urls = doc.get("original_url")
@@ -209,10 +211,13 @@ class DownloaderHttpx:
             path = info[2]
             if re.search("ug", url, re.S) is not None:
                 return
-                info = re.search("img/.*", url).group()
+                if re.search(r"ugoira", url) is not None:
+                    zip_url = url
+                else:
+                    info = re.search(r"img/.*", url).group()
+                    zip_url = "https://i.pximg.net/img-zip-ugoira/" + info + "oira1920x1080.zip"
                 save_name = id + ".zip"
                 image_dir = id + "/"
-                zip_url = "https://i.pximg.net/img-zip-ugoira/" + info + "oira1920x1080.zip"
                 self.logger.info("下载动图ID:%s" % id)
                 failcode = await self.stream_download((zip_url, self.headers), save_name)
                 if failcode:

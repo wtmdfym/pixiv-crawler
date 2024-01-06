@@ -10,7 +10,7 @@ from PyQt6.QtCore import (
     QRect,
     Qt,
 )
-from PyQt6.QtGui import QImageReader, QFont, QAction, QIcon
+from PyQt6.QtGui import QImageReader, QFont     # , QAction, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -21,12 +21,13 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     # QTabBar,
     QWidget,
-    QSystemTrayIcon,
+    # QSystemTrayIcon,
 )
 
 import pixiv_pyqt_tools
 # from GUI.widgets import
-from GUI.tabs import MainTab, SearchTab, TagsTab, UserTab, ConfigTab, ImageTab, OriginalImageTab
+# , ImageTab, OriginalImageTab
+from GUI.tabs import MainTab, SearchTab, TagsTab, UserTab, ConfigTab
 
 # 日志信息
 logging.basicConfig(level=logging.INFO)
@@ -180,6 +181,7 @@ class MyLogging(logging.Logger):
             self.infodisplayer.append("[CRITICAL] - %s" % msg)
 
 
+'''
 class Ui_MainWindow(object):
     def setupUi(self,  MainWindow):
         self.MainWindow = MainWindow
@@ -432,6 +434,55 @@ class mainwindow(QMainWindow):
         QImageReader.setAllocationLimit(256)
 
 
+class TrayIcon(QSystemTrayIcon):
+    def __init__(self, MainWindow, parent=None):
+        super(TrayIcon, self).__init__(parent)
+        self.ui = MainWindow
+        self.createMenu()
+
+    def createMenu(self):
+        self.menu = QMenu()
+        self.showAction1 = QAction("启动", self, triggered=self.show_window)
+        self.quitAction = QAction("退出", self, triggered=self.quit)
+
+        self.menu.addAction(self.showAction1)
+        self.menu.addAction(self.quitAction)
+        self.setContextMenu(self.menu)
+
+        # 设置图标
+        self.setIcon(QIcon(
+            "pixiv-crawler/gui.py"))
+
+        # 把鼠标点击图标的信号和槽连接
+        self.activated.connect(self.onIconClicked)
+
+    def show_window(self):
+        # 若是最小化，则先正常显示窗口，再变为活动窗口（暂时显示在最前面）
+        self.ui.showNormal()
+        self.ui.activateWindow()
+
+    def quit(self):
+        pass
+        # qApp.quit()
+
+    # 鼠标点击icon传递的信号会带有一个整形的值，1是表示单击右键，2是双击，3是单击左键，4是用鼠标中键点击
+    def onIconClicked(self, reason):
+        if reason == 2 or reason == 3:
+            # self.showMessage("Message", "skr at here", self.icon)
+            if self.ui.isMinimized() or not self.ui.isVisible():
+                # 若是最小化，则先正常显示窗口，再变为活动窗口（暂时显示在最前面）
+                self.ui.showNormal()
+                self.ui.activateWindow()
+
+                self.ui.show()
+            else:
+                # 若不是最小化，则最小化
+                self.ui.showMinimized()
+
+                self.ui.show()
+'''
+
+
 class MainWindow(QMainWindow):
     def __init__(self, scaleRate):
         super().__init__()
@@ -443,12 +494,15 @@ class MainWindow(QMainWindow):
         )
         self.config_dict = pixiv_pyqt_tools.ConfigSetter.get_config(
             self.config_save_path)
+        # 初始化协程事件循环
+        # self.loop = asyncio.new_event_loop()
+        # asyncio.set_event_loop(self.loop)
         # 初始化数据库
         # global db, backup_collection
         # global asyncdb, asyncbackup_collection
         client = pymongo.MongoClient("localhost", 27017)
         asyncclient = motor.motor_asyncio.AsyncIOMotorClient(
-            'localhost', 27017)
+            'localhost', 27017)     # , io_loop=self.loop
         self.db = client["pixiv"]
         self.asyncdb = asyncclient["pixiv"]
         self.backup_collection = client["backup"]["backup of pixiv infos"]
@@ -500,7 +554,7 @@ class MainWindow(QMainWindow):
         self.tabWidget.tabCloseRequested.connect(self.close_tab)
         # self.tabWidget.tabBar().setTabButton(0, QTabBar.ButtonPosition.RightSide, None)
         # 初始化MainTab
-        self.tab = MainTab(self, self.config_dict, self.config_save_path, self.db,
+        self.tab = MainTab(self, self.config_dict, self.config_save_path, self.db,  # , self.loop
                            self.backup_collection, self.asyncdb, self.asyncbackup_collection, logger)
         self.tab.setObjectName("MainTab")
         self.tabWidget.addTab(self.tab, "")
@@ -671,54 +725,6 @@ class MainWindow(QMainWindow):
         self.tabWidget.removeTab(index)
         self.tabWidget.setCurrentIndex(index - 1)
         self.tab_count -= 1
-
-
-class TrayIcon(QSystemTrayIcon):
-    def __init__(self, MainWindow, parent=None):
-        super(TrayIcon, self).__init__(parent)
-        self.ui = MainWindow
-        self.createMenu()
-
-    def createMenu(self):
-        self.menu = QMenu()
-        self.showAction1 = QAction("启动", self, triggered=self.show_window)
-        self.quitAction = QAction("退出", self, triggered=self.quit)
-
-        self.menu.addAction(self.showAction1)
-        self.menu.addAction(self.quitAction)
-        self.setContextMenu(self.menu)
-
-        # 设置图标
-        self.setIcon(QIcon(
-            "pixiv-crawler/gui.py"))
-
-        # 把鼠标点击图标的信号和槽连接
-        self.activated.connect(self.onIconClicked)
-
-    def show_window(self):
-        # 若是最小化，则先正常显示窗口，再变为活动窗口（暂时显示在最前面）
-        self.ui.showNormal()
-        self.ui.activateWindow()
-
-    def quit(self):
-        pass
-        # qApp.quit()
-
-    # 鼠标点击icon传递的信号会带有一个整形的值，1是表示单击右键，2是双击，3是单击左键，4是用鼠标中键点击
-    def onIconClicked(self, reason):
-        if reason == 2 or reason == 3:
-            # self.showMessage("Message", "skr at here", self.icon)
-            if self.ui.isMinimized() or not self.ui.isVisible():
-                # 若是最小化，则先正常显示窗口，再变为活动窗口（暂时显示在最前面）
-                self.ui.showNormal()
-                self.ui.activateWindow()
-
-                self.ui.show()
-            else:
-                # 若不是最小化，则最小化
-                self.ui.showMinimized()
-
-                self.ui.show()
 
 
 if __name__ == "__main__":

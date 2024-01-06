@@ -9,7 +9,7 @@ from PyQt6.QtCore import (
     QPoint,
     pyqtSignal,
 )
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QAction, QCursor
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QCursor  # QAction
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -18,9 +18,11 @@ from PyQt6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QVBoxLayout,
+    QStackedLayout,
     QLabel,
     QLineEdit,
     QPushButton,
+    QRadioButton,
     QTableWidget,
     QTextBrowser,
     QWidget,
@@ -303,22 +305,7 @@ class ImageTableWidget(QTableWidget):
         except AttributeError:
             self.update_info_callback("", "", "")
             return
-        id = result.get("id")
-        type = result.get("type")
-        title = result.get("title")
-        userid = result.get("userId")
-        username = result.get("username")
-        tags = result.get("tags")
-        description = result.get("description")
-        self.img_url = "https://www.pixiv.net/artworks/" + str(id)
-        self.img_path = result.get("relative_path")[0]
-
-        infos = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:\n{}\nDescription:\n{}"
-        self.update_info_callback(
-            infos.format(id, type, title, userid, username, tags, description),
-            self.img_url,
-            self.img_path,
-        )
+        self.update_info_callback(result)
 
     def show_original_image(self):
         try:
@@ -961,55 +948,149 @@ class SearchDialog(QDialog):
     def __init__(self, parent):
         super(SearchDialog, self).__init__(parent=parent)
         self.initUi()
+        # 事件绑定
+        self.radioButton_1.toggled.connect(self.buttonStateRadio)
+        self.radioButton_2.toggled.connect(self.buttonStateRadio)
+        # self.radioButton_3.toggled.connect(self.buttonStateRadio)
         self.detailsettingButton.clicked.connect(self.set_detail_settings)
         self.applyButton.clicked.connect(self.get_search_criteria)
+        self.cancelButton.clicked.connect(self.destroy)
         # 新建的窗口始终位于当前屏幕的最前面
         # self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         # 阻塞父类窗口不能点击
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
+        self.keywords_criteria = 0
 
     def initUi(self):
         self.setWindowTitle("搜索条件")
-        self.setGeometry(400, 600, 300, 260)
+        # 居中显示
+        screen = QApplication.primaryScreen().size()
+        width = 300
+        height = 300
+        self.setGeometry(
+            (screen.width() - width) // 2,
+            (screen.height() - height) // 2,
+            width,
+            height,
+        )
         self.setMaximumSize(400, 600)
-        mainLayout = QGridLayout()
-        self.setLayout(mainLayout)
+        self.mainLayout = QGridLayout()
+        self.setLayout(self.mainLayout)
+        # 搜索的作品类型
+        self.radioButton_1 = QRadioButton(self)
+        self.radioButton_1.setText('artworks')
+        self.mainLayout.addWidget(self.radioButton_1, 0, 0, 1, 1)
+        self.radioButton_2 = QRadioButton(self)
+        self.radioButton_2.setText('novels')
+        self.mainLayout.addWidget(self.radioButton_2, 0, 1, 1, 1)
+        # self.radioButton_3 = QRadioButton(self)
+        # self.radioButton_3.setText('?')
+        # self.mainLayout.addWidget(self.radioButton_3, 0, 2, 1, 1)
+        self.radioButton_1.setChecked(True)
         # 关键字
         self.keywordLabel = QLabel(self)
         self.keywordLabel.setText("关键词")
-        mainLayout.addWidget(self.keywordLabel, 0, 0, 1,
-                             1, Qt.AlignmentFlag.AlignLeft)
+        self.mainLayout.addWidget(
+            self.keywordLabel, 1, 0, 1, 1, Qt.AlignmentFlag.AlignLeft)
         self.detailsettingButton = QPushButton(self)
         self.detailsettingButton.setText("详细设置")
-        mainLayout.addWidget(self.detailsettingButton, 0, 1, 1,
-                             1, Qt.AlignmentFlag.AlignRight)
+        self.mainLayout.addWidget(
+            self.detailsettingButton, 1, 1, 1, 1, Qt.AlignmentFlag.AlignRight)
         self.keywordEdit = QLineEdit(self)
         self.keywordEdit.setPlaceholderText("输入搜索关键词")
-        mainLayout.addWidget(self.keywordEdit, 1, 0, 1, 2)
+        self.mainLayout.addWidget(self.keywordEdit, 2, 0, 1, 2)
+        # 堆叠布局
+        self.stackedLayout = QStackedLayout()
+        # self.stackedLayout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.mainLayout.addLayout(self.stackedLayout, 3, 0, 1, 2)
+        # ================================================================
+        #                           artworks
+        # ================================================================
+        self.artworksWidget = QWidget(self)
+        self.artworksLayout = QGridLayout(self.artworksWidget)
+        self.artworksWidget.setLayout(self.artworksLayout)
         # 检索范围
+        self.artworks_searchrangeLabel = QLabel(self)
+        self.artworks_searchrangeLabel.setText("检索范围")
+        self.artworksLayout.addWidget(self.artworks_searchrangeLabel, 0, 0)
         self.worktypeComboBox = QComboBox(self)
         worktypelist = ["插画、漫画、动图(动态漫画)", "插画、动图", "插画", "漫画", "动图"]
         self.worktypeComboBox.addItems(worktypelist)
-        mainLayout.addWidget(self.worktypeComboBox, 2, 0, 1, 2)
-        self.searchtypeComboBox = QComboBox(self)
-        searchtypelist = ["标签(部分一致)", "标签(完全一致)", "标题、说明文字"]
-        self.searchtypeComboBox.addItems(searchtypelist)
-        mainLayout.addWidget(self.searchtypeComboBox, 3, 0, 1, 2)
+        self.artworksLayout.addWidget(self.worktypeComboBox, 1, 0)
+        self.artworks_searchtypeComboBox = QComboBox(self)
+        artworks_searchtypelist = ["标签(部分一致)", "标签(完全一致)", "标题、说明文字"]
+        self.artworks_searchtypeComboBox.addItems(artworks_searchtypelist)
+        self.artworksLayout.addWidget(self.artworks_searchtypeComboBox, 2, 0)
+        self.stackedLayout.addWidget(self.artworksWidget)
+        # ================================================================
+        #                           novels
+        # ================================================================
+        self.novelsWidget = QWidget(self)
+        self.novelsLayout = QGridLayout(self.novelsWidget)
+        self.novelsWidget.setLayout(self.novelsLayout)
+        # 检索范围
+        self.novels_searchrangeLabel = QLabel(self)
+        self.novels_searchrangeLabel.setText("检索范围")
+        self.novelsLayout.addWidget(self.novels_searchrangeLabel, 0, 0)
+        self.novels_searchtypeComboBox = QComboBox(self)
+        novels_searchtypelist = ["标签(部分一致)", "标签(完全一致)", "正文", "标签、标题、说明文字"]
+        self.novels_searchtypeComboBox.addItems(novels_searchtypelist)
+        self.novelsLayout.addWidget(self.novels_searchtypeComboBox, 1, 0)
+        # 作品语言
+        self.worklanguageLabel = QLabel(self)
+        self.worklanguageLabel.setText("作品语言")
+        self.novelsLayout.addWidget(self.worklanguageLabel)
+        self.worklanguageComboBox = QComboBox(self)
+        worklanguagelist = ["所有语种", "简体中文", "日本語",
+                            "English", "한국어", "繁體中文",  "其他"]
+        # 下面这些真的有人看吗？
+        # Bahasa Indonesia, Dansk, Deutsch, Español, Español (Latinoamérica), Filipino, Français, Hrvatski, Italiano
+        # , Nederlands, Polski, Português (Brasil), Português (Portugal), Tiếng Việt, Türkçe, Русский, العربية, ไทย,
+        self.worklanguageComboBox.addItems(worklanguagelist)
+        self.novelsLayout.addWidget(self.worklanguageComboBox, 2, 0)
+        # 正文长度
+        self.textlengthLabel = QLabel(self)
+        self.textlengthLabel.setText("作品语言")
+        self.novelsLayout.addWidget(self.textlengthLabel, 3, 0)
+        self.textlengthtypeComboBox = QComboBox(self)
+        textlengthtypelist = ["文字数", "单词数", "阅读预计用时"]  # 只有第一个有用
+        self.textlengthtypeComboBox.addItems(textlengthtypelist)
+        self.novelsLayout.addWidget(self.textlengthtypeComboBox, 4, 0)
+        self.textlengthComboBox = QComboBox(self)
+        textlengthlist = ["不限", "微型小说(小于4,999字)", "短篇小说(5,000 - 19,999 字)",
+                          "中篇小说(20,000 - 79,999 字)", "长篇小说(大于80,000 字)", "指定文字数"]
+        self.textlengthComboBox.addItems(textlengthlist)
+        self.novelsLayout.addWidget(self.textlengthComboBox, 5, 0)
+        # 原创
+
+        self.stackedLayout.addWidget(self.novelsWidget)
+        # ================================================================
         # 时间
 
         # 其他
         # 整合相同作者的作品
         self.integrateworkCheckBox = QCheckBox(self)
         self.integrateworkCheckBox.setText("整合相同作者的作品")
-        mainLayout.addWidget(self.integrateworkCheckBox, 4, 0, 1, 2)
+        self.mainLayout.addWidget(self.integrateworkCheckBox, 4, 0, 1, 2)
         # 清空检索条件
 
         # 应用按钮
         self.applyButton = QPushButton(self)
         self.applyButton.setText("应用")
-        mainLayout.addWidget(self.applyButton, 5, 0, 1, 2)
+        self.mainLayout.addWidget(self.applyButton, 5, 0, 1, 2)
+        # 取消按钮
+        self.cancelButton = QPushButton(self)
+        self.cancelButton.setText("取消")
+        self.mainLayout.addWidget(self.cancelButton, 6, 0, 1, 2)
 
-    class DetailSetting(QDialog):
+    def buttonStateRadio(self):
+        radioButton = self.sender()
+        if radioButton.isChecked():
+            # change ui
+            search_tpye = {"artworks": 0, "novels": 1}
+            self.stackedLayout.setCurrentIndex(search_tpye[radioButton.text()])
+
+    class DetailConfig(QDialog):
         get_keywords_criteria_singal = pyqtSignal(dict)
 
         def __init__(self, parent, prekeywords: str):
@@ -1065,24 +1146,27 @@ class SearchDialog(QDialog):
             self.close()
 
     def set_detail_settings(self):
-        detailsettingwin = self.DetailSetting(self, self.keywordEdit.text())
+        detailsettingwin = self.DetailConfig(self, self.keywordEdit.text())
         detailsettingwin.get_keywords_criteria_singal.connect(
             self.get_keywords_criteria)
         detailsettingwin.show()
 
     @pyqtSlot(dict)
     def get_keywords_criteria(self, keywords_criteria):
-        self.keywords_criteria = keywords_criteria
+        self.keywords_criteria = 0      # keywords_criteria
         # self.keywordEdit.setText(str(keywords_criteria))
 
     def get_search_criteria(self):
+        # TODO novels
         search_criteria = {}
         if self.keywords_criteria:
             search_criteria["keywords"] = self.keywords_criteria
         else:
             search_criteria["keywords"] = self.keywordEdit.text()
-        search_criteria["worktype"] = self.worktypeComboBox.currentText()
-        search_criteria["searchtype"] = self.searchtypeComboBox.currentText()
+        search_criteria["worktype"] = self.worktypeComboBox.currentIndex()
+        # search_criteria["worktype"] = self.worktypeComboBox.currentText()
+        # search_criteria["searchtype"] = self.searchtypeComboBox.currentText()
+        search_criteria["searchtype"] = self.artworks_searchtypeComboBox.currentIndex()
         search_criteria["integratework"] = self.integrateworkCheckBox.isChecked()
         self.get_search_criteria_singal.emit(search_criteria)
         self.close()

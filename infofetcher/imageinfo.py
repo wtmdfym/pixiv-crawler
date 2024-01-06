@@ -617,8 +617,11 @@ class InfoFetcherHttpx:
                     # print("ok")
                     await self.record_info_mongodb(ids=ids, collection=self.db[name])
         await self.client.aclose()
-        self.logger.info("获取所有作者的作品信息完成")
-        return True
+        if not self.__event.is_set():
+            return False
+        else:
+            self.logger.info("获取所有作者的作品信息完成")
+            return True
 
     async def get_id(self, tag=None, user=None) -> dict:
         async with self.semaphore:
@@ -641,8 +644,8 @@ class InfoFetcherHttpx:
                     "https://www.pixiv.net/ajax/user/{}/profile/all?lang=zh&version={}".format(
                         uid, self.__version)
                 )
-                error_count = 0
                 '''
+                error_count = 0
                 while True:
                     ids_json = {}
                     try:
@@ -739,7 +742,7 @@ class InfoFetcherHttpx:
                     Ids["novels"] = novels_ids
             return (name, Ids)
 
-    async def get_info(self, url: str, id: str) -> dict:
+    async def get_info(self, work_id: str) -> dict:
         """
         Get detailed information about a work
         TODO illust_info:It's not the same if you want to climb other types of works!
@@ -784,11 +787,14 @@ class InfoFetcherHttpx:
         async with self.semaphore:
             if not self.__event.is_set():
                 return
-            self.logger.info("获取作品信息......ID:%s" % id)
+            self.logger.info("获取作品信息......ID:%s" % work_id)
             error_count = 0
+            artworksurl = 'https://www.pixiv.net/artworks/'
+            # novelurl
+            # seriesurl
             while True:
                 try:
-                    response = await self.client.get(url=url, headers=self.headers)
+                    response = await self.client.get(url=artworksurl + work_id, headers=self.headers)
                 except httpx.ConnectError:
                     error_count += 1
                     # self.logger.warning("代理配置可能错误!  检查你的代理!")
@@ -800,14 +806,15 @@ class InfoFetcherHttpx:
                 # except Exception:
                 #     fail = True
                 work_html = response.text
-                info = InfoParsel(work_html, self.client)
+                info = InfoParsel(work_html, self.client, self.logger)
                 info = await info.get_result()
                 if info:
                     if error_count:
                         self.logger.info("自动重试成功!")
                     break
                 else:
-                    self.logger.warning("获取html失败!")
+                    self.logger.warning("获取的html异常!")
+                    # self.logger.debug(work_html)
                     error_count += 1
                     if error_count == 4:
                         self.logger.info("自动重试失败!")
@@ -863,21 +870,20 @@ class InfoFetcherHttpx:
                         # print(find)
                         # print('已存在,跳过')
                         continue
-                    url = "https://www.pixiv.net/artworks/" + _id
-                    _info = self.get_info(
-                        url=url, id=_id)
+                    _info = self.get_info(work_id=_id)
                     task = asyncio.create_task(_info)
                     task_list.append(task)
                 futurelist = await asyncio.gather(*task_list)
                 for info in futurelist:
                     if not self.__event.is_set():
                         return
-                    res = await collection.insert_one(info)
-                    if res:
-                        await self.record_in_tags(info.get("id"), info.get("tags"))
-                    else:
-                        self.logger.critical("记录tag失败")
-                    # print(info)
+                    if info:
+                        res = await collection.insert_one(info)
+                        if res:
+                            await self.record_in_tags(info.get("id"), info.get("tags"))
+                        else:
+                            self.logger.critical("记录tag失败")
+                        # print(info)
                 if not self.__event.is_set():
                     return
 
@@ -953,6 +959,7 @@ class InfoFetcherHttpx:
             async with self.semaphore:
                 async for docs in collection.find({"id": {"$exists": True}}, {"_id": 0}):
                     if not self.__event.is_set():
+                        self.logger.info("停止自动备份!")
                         return False
                     if len(docs) >= 9:
                         b = await self.backup_collection.find_one({"id": docs.get("id")})
@@ -976,15 +983,18 @@ class InfoFetcherHttpx:
 
 
 class InfoParsel:
-    def __init__(self, work_html: str, client: httpx.AsyncClient) -> None:
+    def __init__(self, work_html: str, client: httpx.AsyncClient, logger) -> None:
         self.client = client
+        self.logger = logger
         selector = Selector(text=work_html)
         preload_datas = selector.xpath(
             '//meta[@id="meta-preload-data"]/@content').get()
         # or re.search("error-message", work_html, re.S)
         if not preload_datas:
+            logger.debug(work_html)
             return None
-        info_json = json.loads(preload_datas)
+        info_json = json.loads(preload_datas, strict=False)
+        # print(info_json)
         infos = info_json.items()
         assert len(infos) == 3, "解析方式错误------all"
         _infos = []
@@ -1136,17 +1146,18 @@ class InfoParsel:
         original_urls = []
         # 图片保存路径
         relative_path = []
-        if self.work_type == "illust":
+        if self.work_type == "illust" or "manga":
             xhr_url = "https://www.pixiv.net/ajax/illust/%s/pages?" % self.work_id
         elif self.work_type == "ugoira":
             xhr_url = "https://www.pixiv.net/ajax/illust/%s/ugoira_meta?" % self.work_id
         else:
             return None
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) \
+                AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36',
             "referer": "https://www.pixiv.net/artworks/%s" % self.work_id}
-        params = {"lang": "zh",
-                  "version": "54b602d334dbd7fa098ee5301611eda1776f6f39"}
+        # params = {"lang": "zh"}
+        # "version": "54b602d334dbd7fa098ee5301611eda1776f6f39"}
         # headers.update(
         #     {"referer": "https://www.pixiv.net/artworks/%d" % work_id})
         # requests = client.build_request("GET", xhr_url, params=params, headers=headers)
@@ -1155,37 +1166,41 @@ class InfoParsel:
         while True:
             try:
                 # 获取xhr返回的json
-                res = await self.client.get(xhr_url, params=params, headers=headers)
+                res = await self.client.get(xhr_url, headers=headers)   # , params=params
                 if res.is_success:
                     img_json = res.json()
                 else:
                     error_count += 1
-                    # self.logger.warning("获取作品信息失败\nID:%s------%d" % (work_id, res.status_code))
+                    self.logger.warning("获取作品信息失败\nID:%s------%d" %
+                                        (self.work_id, res.status_code))
                     continue
             except httpx.ConnectTimeout:
                 error_count += 1
-                # self.logger.warning("连接超时!  请检查你的网络!")
+                self.logger.warning("连接超时!  请检查你的网络!")
+                continue
             except httpx._exceptions as exc:
                 error_count += 1
                 img_json = None
                 print(exc)
-                # self.logger.debug(exc)
-                # self.logger.error("获取作品信息失败\nID:%s" % id)
+                self.logger.debug(exc)
+                self.logger.error("获取作品信息失败\nID:%s" % self.work_id)
             finally:
                 if error_count == 4:
-                    # self.logger.info("自动重试失败!")
+                    self.logger.info("自动重试失败!")
                     return None
-                # self.logger.info("自动重试------%d/3" % error_count)
                 if isinstance(img_json, dict):
                     if img_json.get("error"):
                         error_count += 1
-                        # self.logger.info("访问错误------message:%s" % img_json.get("message"))
+                        self.logger.info("访问错误------message:%s" %
+                                         img_json.get("message"))
                     if error_count:
-                        pass
-                        # self.logger.info("自动重试成功!")
-                break
+                        self.logger.info("自动重试成功!")
+                    break
+                else:
+                    error_count += 1
+                    self.logger.info("自动重试------%d/3" % error_count)
         body = img_json.get("body")
-        if self.work_type == "illust":
+        if self.work_type == "illust" or "manga":
             for one in body:
                 urls = one.get("urls")
                 original = urls.get("original")
@@ -1261,10 +1276,12 @@ class InfoParsel:
         return info
 
     async def get_result(self):
-        if self.infos[0] == "illust":
+        if self.infos[0] == "illust" or "manga" or "ugoria":
             result = await self.fetch_artworks_links()
         elif self.infos[0] == "novel":
             result = await self.fetch_novel()
+        else:
+            print(6)
         return result
 
 

@@ -39,15 +39,16 @@ from GUI.widgets import (
     ImageBox,
     SearchDialog
 )
-from GUI.tools import AsyncDownloadThreadingManger
+from GUI.tools import AsyncDownloadThreadingManger, Searcher
 
 
 class MainTab(QWidget):
-    def __init__(self, parent, config_dict: dict,  config_save_path, db,
+    def __init__(self, parent, config_dict: dict,  config_save_path, db,  # loop,
                  backupcollection, asyncdb, asyncbackupcollection, logger) -> None:
         super().__init__(parent)
         self.config_dict = config_dict
         self.config_save_path = config_save_path
+        # self.loop = loop
         self.db = db
         self.asyncdb = asyncdb
         self.backup_collection = backupcollection
@@ -143,9 +144,10 @@ class MainTab(QWidget):
             """
         elif self.download_method == "followings":
             # self.t = DownloadThreadingManger()
-            self.t = AsyncDownloadThreadingManger(self.config_dict, self.config_save_path, self.db,
-                                                  self.backup_collection, self.asyncdb,
-                                                  self.asyncbackup_collection, self.logger)
+            self.t = AsyncDownloadThreadingManger(
+                self.config_dict, self.config_save_path,    # self.loop,
+                self.db, self.backup_collection, self.asyncdb,
+                self.asyncbackup_collection, self.logger)
             self.t.progress_signal.connect(self.update_progressBar)
             self.t.break_signal.connect(self.stop_download)
             self.t.start()
@@ -161,6 +163,7 @@ class MainTab(QWidget):
         self.startButton.setDisabled(True)
         try:
             self.t.stop()
+            del self.t
             self.startButton.setText("start")
             self.startButton.clicked.disconnect(self.stop_download)
             self.startButton.clicked.connect(self.start_download)
@@ -213,6 +216,9 @@ class SearchTab(QWidget):
         # 显示控件
         self.imageinfoDisplayer = QTextBrowser(parent=self)
         self.imageinfoDisplayer.setObjectName("imageinfoDisplayer")
+        # 禁止打开链接
+        self.imageinfoDisplayer.setOpenLinks(False)
+        self.imageinfoDisplayer.setOpenExternalLinks(False)
         # self.imageinfoDisplayer.setFixedHeight(600)
         self.gridLayout.addWidget(self.imageinfoDisplayer, 3, 0, 1, 3)
         self.imagedisplatLayout = QVBoxLayout()
@@ -266,7 +272,7 @@ class SearchTab(QWidget):
         self.imageinfoDisplayer.setPlaceholderText(
             _translate("MainWindow", "单击图片获取图片信息\n双击查看大图"))
         self.jump_pageButton.setText(_translate("MainWindow", "Jump"))
-        self.pageLabel.setText(_translate("MainWindow", "No Page"))
+        self.pageLabel.setText(_translate("MainWindow", "1/1"))
         self.next_pageButton.setText(_translate("MainWindow", "Next Page"))
         self.prev_pageButton.setText(_translate("MainWindow", "Prev Page"))
         self.search_imageButton.setText(_translate("MainWindow", "Search"))
@@ -333,8 +339,24 @@ class SearchTab(QWidget):
         self.pageLabel.setText(str(self.page) + "/" + str(self.total_page))
 
     @pyqtSlot(dict)
-    def make_search_criteria(self, search_criteria):
+    def make_search_criteria(self, search_criteria: dict):
+        work_number = 0
+        self.images_tableWidget.image_datas.clear()
+        self.images_tableWidget.total_page = 1
         print(search_criteria)
+        searcher = Searcher(search_criteria)
+        self.results = searcher.get_result()
+
+        for row in self.results:
+            self.images_tableWidget.image_datas.append(row)
+            work_number += 1
+
+        self.total_page = (
+            work_number - 1) // (self.images_tableWidget.rows * self.images_tableWidget.columns) + 1
+        self.pageEdit.setMaximum(self.total_page)
+        self.images_tableWidget.page = 1
+        self.change_page(1)
+        self.pageLabel.setText(str(self.page) + "/" + str(self.total_page))
 
     def set_search_type(self):
         self.set_search_criteria_win = SearchDialog(self.parent())
@@ -342,9 +364,31 @@ class SearchTab(QWidget):
             self.make_search_criteria)
         self.set_search_criteria_win.show()
 
-    def update_image_info(self, image_info, image_url, image_path):
-        self.image_url, self.image_path = image_url, image_path
-        self.imageinfoDisplayer.setText(image_info)
+    def update_image_info(self, result):
+        self.imageinfoDisplayer.clear()
+        id = result.get("id")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> ID:</font></b>%d' % id)
+        type = result.get("type")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> Type:</font></b>%s' % type)
+        title = result.get("title")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> Title:</font></b><br />%s' % title)
+        userid = result.get("userId")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> UserID:</font></b>%s' % userid)
+        username = result.get("username")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> UserName:</font></b>%s' % username)
+        tags = result.get("tags")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> Tags:</font></b><br />%s' % tags)
+        description = result.get("description")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> Description:</font></b><br />%s' % description)
+        self.image_url = "https://www.pixiv.net/artworks/" + str(id)
+        self.image_path = result.get("relative_path")[0]
 
     def show_in_browser(self):
         import webbrowser
@@ -629,6 +673,7 @@ class UserTab(QWidget):
             // self.pagesize
             + 1
         )
+        self.pageEdit.setMaximum(self.total_page)
         self.user_tableWidget.user_datas = user_datas
         self.change_page(1)
 
@@ -675,7 +720,7 @@ class UserTab(QWidget):
     def retranslateUi(self):
         _translate = QCoreApplication.translate
         self.jump_pageButton.setText(_translate("MainWindow", "Jump"))
-        self.pageLabel.setText(_translate("MainWindow", "No Page"))
+        # self.pageLabel.setText(_translate("MainWindow", "1/1"))
         self.next_pageButton.setText(_translate("MainWindow", "Next Page"))
         self.prev_pageButton.setText(_translate("MainWindow", "Prev Page"))
 
@@ -1083,7 +1128,7 @@ class ConfigTab(QWidget):
 
 
 class ImageTab(QWidget):
-    def __init__(self, parent, save_path: str, logger, image_data: dict, show_image_callback, usethumbnail: bool = False):
+    def __init__(self, parent, save_path: str, logger, image_info: dict, show_image_callback, usethumbnail: bool = False):
         '''
             image_data -> eg:{'_id': ObjectId('6569f5118b962c95d51e3cf9'),\
                 'type': 'illusts', 'id': 113867483, 'title': 'あさひに蟹縛り',\
@@ -1101,26 +1146,36 @@ class ImageTab(QWidget):
         self.default_height = 700
         self.initUI(save_path, show_image_callback, usethumbnail)
         self.retranslateUi()
-        self.total_page = (len(image_data.get("relative_path")) -
+        self.total_page = (len(image_info.get("relative_path")) -
                            1) // (self.images_tableWidget.rows * self.images_tableWidget.columns) + 1
         self.pageEdit.setMaximum(self.total_page)
         self.pageLabel.setText(str(self.page) + "/" + str(self.total_page))
-        self.images_tableWidget.image_datas = image_data
+        self.images_tableWidget.image_datas = image_info
         # 作品信息
-        id = image_data.get("id")
-        type = image_data.get("type")
-        title = image_data.get("title")
-        userid = image_data.get("userId")
-        username = image_data.get("username")
-        tags = image_data.get("tags")
-        description = image_data.get("description")
+        id = image_info.get("id")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> ID:</font></b>%d' % id)
+        type = image_info.get("type")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> Type:</font></b>%s' % type)
+        title = image_info.get("title")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> Title:</font></b><br />%s' % title)
+        userid = image_info.get("userId")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> UserID:</font></b>%s' % userid)
+        username = image_info.get("username")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> UserName:</font></b>%s' % username)
+        tags = image_info.get("tags")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> Tags:</font></b><br />%s' % tags)
+        description = image_info.get("description")
+        self.imageinfoDisplayer.append(
+            '<b><font color=DeepSkyBlue> Description:</font></b><br />%s' % description)
         self.image_url = "https://www.pixiv.net/{}/{}".format(
-            image_data.get("type"), image_data.get("id"))
-        self.image_path = save_path + image_data.get("relative_path")[0]
-        info = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:\n{}\nDescription:\n{}"
-        info = info.format(id, type, title, userid,
-                           username, tags, description)
-        self.imageinfoDisplayer.setPlainText(info)
+            image_info.get("type"), image_info.get("id"))
+        self.image_path = save_path + image_info.get("relative_path")[0]
         # 显示图片
         self.images_tableWidget.update_image_new()
 
@@ -1235,31 +1290,39 @@ class ImageTab(QWidget):
 class OriginalImageTab(QWidget):
     def __init__(self, image_info=None) -> None:
         super().__init__()
-        if image_info:
-            # self.info = image_info
-            if isinstance(image_info, str):
-                self.info = image_info
-            else:
-                id = image_info.get("id")
-                type = image_info.get("type")
-                title = image_info.get("title")
-                userid = image_info.get("userId")
-                username = image_info.get("username")
-                tags = image_info.get("tags")
-                description = image_info.get("description")
-                infos = "ID:{}\nType:{}\nTitle:{}\nUserID:{}\nUserName:{}\nTags:\n{}\nDescription:\n{}"
-                self.info = infos.format(
-                    id, type, title, userid, username, tags, description)
-        else:
-            self.info = None
+        self.info = image_info
         self.initUI()
+        if isinstance(image_info, str):
+            self.imageinfoDisplayer.setPlainText(self.info)
+        elif image_info:
+            # 作品信息
+            id = image_info.get("id")
+            self.imageinfoDisplayer.append(
+                '<b><font color=DeepSkyBlue> ID:</font></b>%d' % id)
+            type = image_info.get("type")
+            self.imageinfoDisplayer.append(
+                '<b><font color=DeepSkyBlue> Type:</font></b>%s' % type)
+            title = image_info.get("title")
+            self.imageinfoDisplayer.append(
+                '<b><font color=DeepSkyBlue> Title:</font></b><br />%s' % title)
+            userid = image_info.get("userId")
+            self.imageinfoDisplayer.append(
+                '<b><font color=DeepSkyBlue> UserID:</font></b>%s' % userid)
+            username = image_info.get("username")
+            self.imageinfoDisplayer.append(
+                '<b><font color=DeepSkyBlue> UserName:</font></b>%s' % username)
+            tags = image_info.get("tags")
+            self.imageinfoDisplayer.append(
+                '<b><font color=DeepSkyBlue> Tags:</font></b><br />%s' % tags)
+            description = image_info.get("description")
+            self.imageinfoDisplayer.append(
+                '<b><font color=DeepSkyBlue> Description:</font></b><br />%s' % description)
 
     def initUI(self):
         self.hboxLayout = QHBoxLayout(self)
         if self.info:
-            self.infodisplater = QTextBrowser(self)
-            self.infodisplater.setPlainText(self.info)
-            self.hboxLayout.addWidget(self.infodisplater, 0)
+            self.imageinfoDisplayer = QTextBrowser(self)
+            self.hboxLayout.addWidget(self.imageinfoDisplayer, 0)
         self.box = ImageBox()
         self.hboxLayout.addWidget(self.box, 1)
 
