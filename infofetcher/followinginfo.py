@@ -100,12 +100,17 @@ class FollowingsRecorder:
             # print(followings)
             session.close()
 
+        if not self.__event.is_set():
+            return
         self.logger.info("开始更新数据库......")
         followings_collection = self.db["All Followings"]
+        # 记录当前关注的作者信息
+        userId_list = []
         info_count = len(following_infos)
         for count in range(info_count):
             following = following_infos[count]
             userId = following.get("userId")
+            userId_list.append(userId)
             # 跳过Pixiv官方的账户
             if userId == "11":
                 continue
@@ -158,7 +163,23 @@ class FollowingsRecorder:
                     raise Exception("Insert Failed")
             self.progress_signal.emit(
                 [("更新数据库......", int(100 * count / info_count))])
-        self.progress_signal.emit([("No Process", 100)])
+        # 检查是否有已取消关注的作者
+        # {"userId": {"$exists": "true"}}
+        earliers = list(followings_collection.find())
+        count = 0
+        info_count = len(earliers)
+        for earlier in earliers:
+            userId = earlier.get("userId")
+            userName = earlier.get("userName")
+            if userId in userId_list:
+                pass
+            else:
+                followings_collection.find_one_and_update(
+                    {"userId": userId}, {'$set': {'not_following_now': True}})
+                print("已取消关注:%s" % {"userId": userId, "userName": userName})
+            self.progress_signal.emit(
+                [("检查数据库......", int(100 * count / info_count))])
+        self.progress_signal.emit([("更新数据库完成", 100)])
         self.logger.info("更新数据库完成")
         return 1
 

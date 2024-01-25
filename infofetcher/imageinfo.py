@@ -599,6 +599,8 @@ class InfoFetcherHttpx:
         task_list = []
         async for painter in painters:
             # for painter in painters:
+            if painter.get('not_following_now'):
+                continue
             uid = painter.get("userId")
             name = painter.get("userName")
             ids = self.get_id(user=(uid, name))
