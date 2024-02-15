@@ -209,10 +209,10 @@ class DownloaderHttpx:
             id = str(info[0])
             url = info[1]
             path = info[2]
-            if re.search("ug", url, re.S) is not None:
+            if re.search(r"ug", url, re.S) is not None:
                 return
                 if re.search(r"ugoira", url) is not None:
-                    zip_url = url
+                    cover_url = url
                 else:
                     info = re.search(r"img/.*", url).group()
                     zip_url = "https://i.pximg.net/img-zip-ugoira/" + info + "oira1920x1080.zip"

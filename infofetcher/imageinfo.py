@@ -744,7 +744,7 @@ class InfoFetcherHttpx:
                     Ids["novels"] = novels_ids
             return (name, Ids)
 
-    async def get_info(self, work_id: str) -> dict:
+    async def get_info(self, work_id: str, collection) -> dict:
         """
         Get detailed information about a work
         TODO illust_info:It's not the same if you want to climb other types of works!
@@ -822,7 +822,14 @@ class InfoFetcherHttpx:
                         self.logger.info("自动重试失败!")
                         return None
                     self.logger.info("自动重试------%d/3" % error_count)
-            return info
+            if info:
+                res = await collection.insert_one(info)
+                if res:
+                    await self.record_in_tags(info.get("id"), info.get("tags"))
+                else:
+                    self.logger.critical("记录tag失败")
+                    # print(info)
+            return None
 
     async def record_in_tags(self, id: int, tags) -> None:
         self.tags_collection = self.db["All Tags"]
@@ -872,13 +879,14 @@ class InfoFetcherHttpx:
                         # print(find)
                         # print('已存在,跳过')
                         continue
-                    _info = self.get_info(work_id=_id)
+                    _info = self.get_info(work_id=_id, collection=collection)
                     task = asyncio.create_task(_info)
                     task_list.append(task)
-                futurelist = await asyncio.gather(*task_list)
-                for info in futurelist:
+                futurelist = await asyncio.gather(*task_list)              
+                for res in futurelist:
                     if not self.__event.is_set():
                         return
+                    '''
                     if info:
                         res = await collection.insert_one(info)
                         if res:
@@ -886,6 +894,7 @@ class InfoFetcherHttpx:
                         else:
                             self.logger.critical("记录tag失败")
                         # print(info)
+                    '''
                 if not self.__event.is_set():
                     return
 
