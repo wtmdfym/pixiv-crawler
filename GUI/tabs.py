@@ -39,7 +39,7 @@ from GUI.widgets import (
     ImageBox,
     SearchDialog
 )
-from GUI.tools import AsyncDownloadThreadingManger, Searcher
+from GUI.tools import AsyncDownloadThreadingManger, Searcher, check_image
 
 
 class MainTab(QWidget):
@@ -57,6 +57,8 @@ class MainTab(QWidget):
         self.default_width = 1240
         self.default_height = 700
         self.initUI()
+        self.checkButton.clicked.connect(lambda: check_image(
+            config_dict['save_path'], backupcollection))
         self.startButton.clicked.connect(self.start_download)
         self.download_method = "followings"
         # self.inpuEdit.textEdited['QString'].connect() # type: ignore
@@ -69,7 +71,10 @@ class MainTab(QWidget):
         self.gridLayout_5.setObjectName("gridLayout_5")
         self.inputEdit = QLineEdit(parent=self)
         self.inputEdit.setObjectName("inputEdit")
-        self.gridLayout_5.addWidget(self.inputEdit, 0, 0, 1, 2)  # 位置0,0占1行2列
+        self.gridLayout_5.addWidget(self.inputEdit, 0, 0, 1, 1)  # 位置0,0占1行2列
+        self.checkButton = QPushButton(parent=self)
+        self.checkButton.setObjectName("checkButton")
+        self.gridLayout_5.addWidget(self.checkButton, 0, 1, 1, 1)
         self.startButton = QPushButton(parent=self)
         self.startButton.setObjectName("startButton")
         self.gridLayout_5.addWidget(self.startButton, 0, 2, 1, 1)
@@ -109,6 +114,7 @@ class MainTab(QWidget):
         _translate = QCoreApplication.translate
         self.inputEdit.setPlaceholderText(
             _translate("MainWindow", "输入要下载的作品id或标签"))
+        self.checkButton.setText(_translate("MainWindow", "check image"))
         self.startButton.setText(_translate("MainWindow", "start"))
         self.radioButton.setText(_translate("MainWindow", "Onework"))
         self.radioButton_2.setText(_translate("MainWindow", "Tags"))
@@ -143,7 +149,6 @@ class MainTab(QWidget):
             downloader.start_work_download(id=self.inputEdit.text())
             """
         elif self.download_method == "followings":
-            # self.t = DownloadThreadingManger()
             self.t = AsyncDownloadThreadingManger(
                 self.config_dict, self.config_save_path,    # self.loop,
                 self.db, self.backup_collection, self.asyncdb,

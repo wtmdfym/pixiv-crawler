@@ -1,6 +1,7 @@
 # -*-coding:utf-8-*-
 import threading
-import requests
+import aiohttp
+import asyncio
 
 
 class FollowingsRecorder:
@@ -22,8 +23,9 @@ class FollowingsRecorder:
     __proxies = {'http': 'http://localhost:1111',
                  'https': 'http://localhost:1111'}
     __event = threading.Event()
+    __event = asyncio.Event()
 
-    def __init__(self, cookies: dict, database, logger, progress_signal):
+    def __init__(self, cookies: dict, database, logger, semaphore: int = None, progress_signal=None):
         """Initialize followingrecoder class
 
         Initialize class variables and stop event
@@ -42,66 +44,13 @@ class FollowingsRecorder:
             "User-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36 Edg/115.0.1901.188",
             "referer": "https://www.pixiv.net/"}
+        self.timeout = aiohttp.ClientTimeout(total=5)
+        self.semaphore = asyncio.Semaphore(semaphore)
         self.__event.set()
 
-    def following_recorder(self):
-        """Get information about users you've followed
-
-            Visit Pixiv to get the users you following, and then
-            call the __get_my_followings method to get the author information.
-            After the acquisition is complete, it is added to the MongoDB database
-
-            Args:
-                None
-
-            Returns:
-                1: The function has been successfully executed
-
-            Raises:
-                Exception: The database operation failed
-        """
-        self.logger.info("获取已关注的用户的信息......")
-        url = "https://www.pixiv.net/ajax/user/extra?lang=zh&version={version}".format(
-            version=self.__version
-        )
-        # self.headers.update(
-        #     {"referer": "https://www.pixiv.net/users/83945559/following?p=1"})
-        with requests.Session() as session:
-            try:
-                response1 = session.get(
-                    url=url,
-                    headers=self.headers,
-                    cookies=self.cookies,
-                    proxies=self.__proxies,
-                    timeout=3,
-                )
-            except requests.exceptions.ConnectionError:
-                self.logger.error("无法访问pixiv,检查你的网络连接")
-                return
-                # raise Exception('[ERROR]-----无法访问pixiv,检查你的网络连接')
-            try:
-                response = response1.json()
-            except requests.exceptions.JSONDecodeError:
-                self.logger.error("无法访问pixiv,检查你的网络连接\n%s" % response1)
-                return
-                # raise Exception('[ERROR]-----无法访问pixiv,检查你的网络连接')
-            if response.get("error"):
-                self.logger.error(
-                    "请检查你的cookie是否正确\ninformation:%s\nyour cookies:%s"
-                    % (response, self.cookies)
-                )
-                return
-                # raise Exception('请检查你的cookie是否正确',response)
-            if not self.__event.is_set():
-                return
-            body = response.get("body")
-            following = body.get("following")
-            following_infos = self.__get_my_followings(session, following)
-            # print(followings)
-            session.close()
-
+    def following_recorder(self, following_infos) -> int:
         if not self.__event.is_set():
-            return
+            return 0
         self.logger.info("开始更新数据库......")
         followings_collection = self.db["All Followings"]
         # 记录当前关注的作者信息
@@ -161,8 +110,8 @@ class FollowingsRecorder:
                     self.logger.debug("Insert Success")
                 else:
                     raise Exception("Insert Failed")
-            self.progress_signal.emit(
-                [("更新数据库......", int(100 * count / info_count))])
+            # self.progress_signal.emit(
+            #     [("更新数据库......", int(100 * count / info_count))])
         # 检查是否有已取消关注的作者
         # {"userId": {"$exists": "true"}}
         earliers = list(followings_collection.find())
@@ -177,39 +126,62 @@ class FollowingsRecorder:
                 followings_collection.find_one_and_update(
                     {"userId": userId}, {'$set': {'not_following_now': True}})
                 print("已取消关注:%s" % {"userId": userId, "userName": userName})
-            self.progress_signal.emit(
-                [("检查数据库......", int(100 * count / info_count))])
-        self.progress_signal.emit([("更新数据库完成", 100)])
+            # self.progress_signal.emit(
+            #     [("检查数据库......", int(100 * count / info_count))])
+        # self.progress_signal.emit([("更新数据库完成", 100)])
         self.logger.info("更新数据库完成")
         return 1
 
-    def __get_my_followings(self, session: requests.Session, following: int):
-        """Get the user's information
+    async def async_following_fetcher(self) -> int:
+        success = 0
+        async with self.semaphore:
+            async with aiohttp.ClientSession(headers=self.headers, cookies=self.cookies, timeout=self.timeout) as session:
+                self.logger.info("获取已关注的用户的信息......")
+                url = "https://www.pixiv.net/ajax/user/extra?lang=zh&version={version}".format(
+                    version=self.__version
+                )
+                # self.headers.update(
+                #     {"referer": "https://www.pixiv.net/users/83945559/following?p=1"})
+                # 检查Cookie是否正确
+                if (23 <= len(self.cookies) <= 25) is not True:
+                    self.logger.warning("Cookies设置错误!")
+                    return
+                try:
+                    res = await session.get(
+                        url,
+                        headers=self.headers,
+                        proxy=self.__proxies,
+                    )
+                    followings_json = await res.json()
+                    if followings_json.get("error"):
+                        self.logger.error(
+                            "请检查你的cookie是否正确\ninformation:%s\nyour cookies:%s"
+                            % (followings_json, self.cookies)
+                        )
+                        return
+                        # raise Exception('请检查你的cookie是否正确',response)
+                    if not self.__event.is_set():
+                        return
+                    body = followings_json.get("body")
+                    following = body.get("following")
+                    following_infos = await self.__async_get_my_followings(session, following)
+                    success = self.following_recorder(following_infos)
+                except asyncio.exceptions.TimeoutError:
+                    self.logger.warning("连接超时!  请检查你的网络!")
+                finally:
+                    return success
 
-            Get the user's username, ID, and self-introduction
-
-            Args:
-                following(int):Number of users followed
-
-            Returns:
-                A list of usernames, IDs, and self-introductions for each author you follow. For example:
-
-                [{'userId': '75793178', 'userName': '木下林檎', 'userComment': '努力自学画画小小萌新，画风不定多变，大佬们多多关照啦~'},
-                    {'userId': '21752034', 'userName': 'Flanling', 'userComment': '連絡方法が知りたい方はピクシブまでお問い合わせください
-                    原稿受付を一時停止しますContact me on pixiv to get  information.Temporarily stop accepting manuscripts
-                    luoyeyingdie@gmail.com'}]
-
-        """
+    async def __async_get_my_followings(self, session: aiohttp.ClientSession, following: int):
         following_url = "https://www.pixiv.net/ajax/user/83945559/following?offset={offset}\
             &limit=24&rest=show&tag=&acceptingRequests=0&lang=zh&version={version}"
         userinfos = []
         all_page = following // 24 + 1
         for page in range(all_page):
             if not self.__event.is_set():
-                self.progress_signal.emit([("No Process", 100)])
+                # self.progress_signal.emit([("No Process", 100)])
                 return
-            self.progress_signal.emit(
-                [("获取关注作者页......", int(100 * (page + 1)/all_page))])
+            # self.progress_signal.emit(
+            #     [("获取关注作者页......", int(100 * (page + 1)/all_page))])
             # sys.stdout.write("\r获取关注作者页%d/%d" % (page + 1, all_page))
             # sys.stdout.flush()
             # self.headers.update(
@@ -220,14 +192,13 @@ class FollowingsRecorder:
             while 1:
                 response = 0
                 try:
-                    response = session.get(
+                    response = await session.get(
                         url=following_url1,
                         headers=self.headers,
-                        cookies=self.cookies,
                         proxies=self.__proxies,
-                        timeout=3,
-                    ).json()
-                except requests.exceptions.ConnectionError:
+                    )
+                    response = await response.json()
+                except asyncio.exceptions.TimeoutError:
                     self.logger.warning("连接超时!  请检查你的网络!")
                     error_count += 1
                     if error_count == 4:
@@ -250,7 +221,7 @@ class FollowingsRecorder:
                         "userComment": userComment}
                 )
         self.logger.info("获取关注作者完成")
-        self.progress_signal.emit([("No Process", 100)])
+        # self.progress_signal.emit([("No Process", 100)])
         return userinfos
 
     def __rename_collection(self, name1: str, name2: str) -> None:

@@ -1,4 +1,5 @@
 # -*-coding:utf-8-*-
+import pymongo
 import os
 import time
 import asyncio
@@ -16,85 +17,8 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QImage, QPixmap
 from PyQt6.QtWidgets import QLabel
-
-
-class DownloadThreadingManger(QThread):
-    break_signal = pyqtSignal()
-    progress_signal = pyqtSignal(list)
-
-    def __init__(self, config_dict: dict,  config_save_path,  db, backupcollection, logger) -> None:
-        super().__init__()
-        self.ifstop = False
-        self.config_dict = config_dict
-        self.config_save_path = config_save_path
-        self.db = db
-        self.backup_collection = backupcollection
-        self.logger = logger
-
-    def run(self):
-        # 获取关注的作者
-        if self.ifstop:
-            return
-        self.followings_recorder = pixiv_pyqt_tools.FollowingsRecorder(
-            self.config_dict["cookies"], self.db, self.logger, self.progress_signal
-        )
-        success = self.followings_recorder.following_recorder()
-        if not success:
-            self.break_signal.emit()
-            return
-        del self.followings_recorder
-        # 获取关注的作者的信息
-        if self.ifstop:
-            return
-        newtime = time.strftime("%Y%m%d%H%M%S")
-        if pixiv_pyqt_tools.Tools.compare_datetime(
-            self.config_dict["last_record_time"], newtime
-        ):
-            self.info_getter = pixiv_pyqt_tools.InfoGetter(
-                self.config_dict["cookies"],
-                self.config_dict["download_type"],
-                self.db,
-                self.backup_collection,
-                self.logger,
-                self.progress_signal,
-            )
-            success = self.info_getter.start_get_info()
-            if success:
-                self.config_dict.update({"last_record_time": newtime})
-                pixiv_pyqt_tools.ConfigSetter.set_config(
-                    self.config_save_path, self.config_dict)
-            del self.info_getter
-        # 下载作品
-        if self.ifstop:
-            return
-        self.downloader = pixiv_pyqt_tools.Downloader(
-            self.config_dict["save_path"],
-            self.config_dict["cookies"],
-            self.config_dict["download_type"],
-            self.config_dict["download_thread_number"],
-            self.backup_collection,
-            self.logger,
-            self.progress_signal,
-        )
-        self.downloader.start_following_download()
-        del self.downloader
-        self.break_signal.emit()
-
-    def stop(self):
-        self.ifstop = True
-        try:
-            self.followings_recorder.stop_recording()
-        except AttributeError:
-            pass
-        try:
-            self.info_getter.stop_getting()
-        except AttributeError:
-            pass
-        try:
-            self.downloader.stop_downloading()
-        except AttributeError:
-            pass
-        self.quit()
+from tqdm.tk import tqdm
+from PIL import Image
 
 
 class AsyncDownloadThreadingManger(QThread):
@@ -134,7 +58,8 @@ class AsyncDownloadThreadingManger(QThread):
                 self.config_dict["cookies"], self.db, self.logger, self.progress_signal
             )
             self.followings_recorder.set_proxies(proxies)
-            success = self.followings_recorder.following_recorder()
+            success = loop.run_until_complete(asyncio.ensure_future(
+                self.followings_recorder.async_following_fetcher()))
             if not success:
                 self.break_signal.emit()
                 loop.stop()
@@ -166,18 +91,6 @@ class AsyncDownloadThreadingManger(QThread):
         if self.ifstop:
             loop.stop()
             return
-        '''
-        self.downloader = downloader.ThreadpoolDownloader(
-            self.config_dict["save_path"],
-            self.config_dict["cookies"],
-            self.config_dict["download_type"],
-            self.config_dict["download_thread_number"],
-            self.backup_collection,
-            self.logger,
-        )
-        self.downloader.set_proxies(proxies)
-        self.downloader.start_following_download()
-        '''
         self.downloader = downloader.AsyncioDownloaderHttpx(
             self.config_dict["save_path"],
             self.config_dict["cookies"],
@@ -255,7 +168,65 @@ class ImageLoader(QRunnable):
                 QLabel, self.target), Q_ARG(object, args))
 
 
-import pymongo
+def check_image(save_path, backup_collection):
+    client = pymongo.MongoClient("localhost", 27017)
+    backup_collection = client["backup"]["backup of pixiv infos"]
+    works_count = backup_collection.count_documents(
+        {'id': {"$exists": "true"}})
+    # processed_count = 0
+    with backup_collection.find({'id': {"$exists": "true"}}, no_cursor_timeout=True).sort('id', -1).batch_size(20) as results:
+        with tqdm(total=works_count) as pbar:
+            pbar.set_description("preparing......")
+            for result in results:
+                pbar.set_description("checking work:%d" % result.get('id'))
+                if result.get('id') <= 118000000:
+                    return
+                for relative_path in result.get("relative_path"):
+                    bValid = True
+                    image_path = save_path + relative_path
+                    print("checking work:%s" % image_path)
+                    if os.path.exists(image_path):
+                        '''
+                        with open(image_path, 'rb') as f:
+                            buf = f.read()
+                            if buf[6:10] in (b'JFIF', b'Exif'):     # jpg图片
+                                if not buf.rstrip(b'\0\r\n').endswith(b'\xff\xd9'):
+                                    bValid = False
+                            else:
+                                try:
+                                    Image.open(f).verify()
+                                except Exception:
+                                    bValid = False
+                        '''
+                        try:
+                            Image.open(image_path).verify()
+                        except Exception:
+                            bValid = False
+                        image = QImage(image_path)
+                        # 若图片大部分为灰
+                        if image.pixel(image.width() - 1, image.height() - 1) == 4286611584:
+                            if image.pixel(int(image.width() / 2), image.height() - 1) == 4286611584:
+                                if image.pixel(0, image.height() - 1) == 4286611584:
+                                    # invalid color : 4286611584  (default gray jpg)
+                                    bValid = False
+                        # image = QImage.fromData(data)
+                        # image = image.convertToFormat(QImage.Format.Format_ARGB32)
+                        pixmap = QPixmap()
+                        if pixmap.convertFromImage(image):
+                            # 图片加载成功
+                            pass
+                        else:
+                            # 图片加载失败
+                            bValid = False
+                    if not bValid:
+                        print("remove %s" % image_path)
+                        os.remove(image_path)
+                pbar.update(1)
+                # processed_count += 1
+                # if processed_count >= 30:
+                #     break
+
+
 class Searcher():
     def __init__(self, search_criteria, client: pymongo.MongoClient) -> None:
         '''TODO series and novels'''
@@ -263,7 +234,7 @@ class Searcher():
         # {'keywords': {'all': '捆绑,R-18', 'some': '', 'no': 'ai'},
         #  'worktype': 0, 'searchtype': 0, 'integratework': False}
         # :/runoob/
-        query = {}
+        self.query = {}
         orquery = []
         # 搜索的作品类型
         # worktype [0:"插画、漫画、动图(动态漫画)", 1:"插画、动图", 2:"插画", 3:"漫画", 4:"动图"]
@@ -325,7 +296,7 @@ class Searcher():
                 pass
             for one in self.keywords.split(','):
                 pass
-            collection.find(query).sort("id", -1)
+            collection.find(self.query).sort("id", -1)
         else:
             pass
 

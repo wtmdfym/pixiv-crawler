@@ -5,7 +5,5 @@
 import infofetcher.followinginfo
 import infofetcher.imageinfo
 FollowingsRecorder = infofetcher.followinginfo.FollowingsRecorder
-InfoFetcher = infofetcher.imageinfo.InfoFetcher
 InfoFetcherHttpx = infofetcher.imageinfo.InfoFetcherHttpx
-InfoGetterOld = infofetcher.imageinfo.InfoGetter_old
-__all__ = ["FollowingsRecorder", "InfoFetcher"]
+__all__ = ["FollowingsRecorder", "InfoFetcherHttpx"]

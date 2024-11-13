@@ -1,0 +1,9 @@
+aiohttp
+httpx
+pillow
+parsel
+pythonnet
+PyQt6
+motor
+tqdm
+imageio

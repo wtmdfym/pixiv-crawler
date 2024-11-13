@@ -1,4 +1,4 @@
-import requests
+# import requests
 import aiohttp
 import asyncio
 import time
@@ -9,7 +9,7 @@ import re
     2.通过ClientSession对象去发送请求（get, post, delete等）
     3.await 异步等待返回结果
 """
-
+'''
 timeout = aiohttp.ClientTimeout(total=10)
 
 
@@ -145,10 +145,24 @@ def check_proxy():
             print(resp)
             delete_proxy(proxy_info.get("proxy"))
     print(requests.get("http://127.0.0.1:5010/all/").json())
+'''
+async def _endless_request():
+    counter = 0
+    async with aiohttp.ClientSession() as session:
+        while True:
+            resp = await session.get('http://wxa.zxcae.hair/dingding/')
+            counter += 1
+            print('Request--%d  %d' % (counter, resp.status))
+
+def endless_request(a):
+    asyncio.run(_endless_request())
+
+def terminate_signal_handler(signal, frame):
+    exit(0)
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    # asyncio.run(main())
     # loop = asyncio.get_event_loop()
     # task = loop.create_task(main())
     # loop.run_until_complete(task)
@@ -158,3 +172,16 @@ if __name__ == '__main__':
     # resp = requests.get('https://www.pixiv.net/artworks/113102650', timeout=5,
     #                     proxies={'http': 'http://localhost:1111', 'https': 'http://localhost:1111'})
     # print(resp.status_code)
+    
+    from concurrent.futures import ThreadPoolExecutor
+    import signal
+    
+    # 创建线程池
+    with ThreadPoolExecutor() as executor:
+        for a in range(10):
+            executor.submit(endless_request, a)
+        executor.shutdown()
+    
+    # 终止信号处理
+    signal.signal(signal.SIGINT, terminate_signal_handler)
+    signal.signal(signal.SIGTERM, terminate_signal_handler)

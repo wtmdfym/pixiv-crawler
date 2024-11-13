@@ -287,3 +287,124 @@ class Ui_MainWindow(object):
         self.save_configsButton.setText(_translate("MainWindow", "save"))
         self.tabWidget.setTabText(self.tabWidget.indexOf(self.tab_4), _translate("MainWindow", "Settings"))
         self.menuHelp.setTitle(_translate("MainWindow", "Help"))
+
+
+if __name__ == '__main__':
+    #!/usr/bin/env  python3
+    import dns.resolver
+    from dnslib.server import DNSServer, DNSLogger, BaseResolver
+    from dnslib import DNSRecord, RR, A, QTYPE, CNAME
+
+
+    # 定义 A 记录列表
+    IP_DOMIN_A_ALL = {
+    "www.test.111.com.": "192.168.1.1",
+    "www.test.112.com.": "192.168.1.2",
+    "www.test.113.com.": "192.168.1.3",
+    "www.test.114.com.": "192.168.1.4",
+    }
+
+    # 定义 CNAME 记录列表
+    CNAME_DOMIN_ALL = {
+    "www.cname.111.com.": "www.baidu.com",
+    "www.cname.112.com.": "www.baidu.com",
+    "www.cname.113.com.": "www.baidu.com",
+    "www.cname.114.com.": "www.google.com",
+    }
+
+    # 定义要转发 DNS 请求的 DNS 服务器
+    FORWARD_DNS_SERVER = ['114.114.114.114']
+
+    class TestResolver(BaseResolver):
+    # 定义 DNS 请求处理函数
+        def resolve(self,request,handler):
+            # 从请求中获取域名
+            qname = str(request.q.qname)
+            # 如果是需要解析的域名，返回 A 记录
+            if qname in IP_DOMIN_A_ALL.keys():
+                # 构造 A 记录
+                print('客户端ip: ' + handler.client_address[0] + ' 请求域名' + qname + '存在 A 记录自定义解析')
+                reply = request.reply()
+                reply.add_answer(RR(qname, QTYPE.A, rdata=A(IP_DOMIN_A_ALL[qname])))
+                return reply
+            
+            elif qname in CNAME_DOMIN_ALL.keys():
+                # 构造 CNAME 记录
+                print('客户端ip: ' + handler.client_address[0] + ' 请求域名' + qname + '存在 CNAME 记录自定义解析')
+                reply = request.reply()
+                reply.add_answer(RR(qname,  QTYPE.CNAME, rdata=CNAME(CNAME_DOMIN_ALL[qname])))
+                return reply
+
+            # 否则，转发请求给其他 DNS 服务器进行解析
+            else:
+                # 创建指定 DNS 服务器的 Resolver 对象
+                print('客户端ip: ' + handler.client_address[0] + qname + '不存在解析，正在发起权威 DNS '+ str(FORWARD_DNS_SERVER))
+                resolver = dns.resolver.Resolver()
+                resolver.nameservers = FORWARD_DNS_SERVER
+                # 解析请求
+                answer = resolver.resolve(qname, request.q.qtype)
+                # 构造响应
+                reply = request.reply()
+                for rr in answer:
+                    reply.add_answer(RR(qname, rr.rdtype, rdata=A(rr.address)))
+        
+                return reply
+
+    # 创建 DNS 服务器实例
+    resolver = TestResolver()
+    logger = DNSLogger()
+    server = DNSServer(resolver ,port=53, address='0.0.0.0' ,logger=logger)
+
+    # 启动 DNS 服务器
+    server.start()
+
+
+'''
+worker_processes  1;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    sendfile        on;
+    keepalive_timeout  65;
+     proxy_intercept_errors on;
+
+
+    server {
+    listen       80;
+    server_name  http://example.com;
+
+    location / {
+    root   html;
+    index  index.html index.htm;
+    proxy_pass  https://example.com;
+    }
+    location /api {
+    root   html;
+    index  index.html index.htm;
+    proxy_pass  http://backend.local:8080;
+    }
+    location /admin {
+    root   html;
+    index  index.html index.htm;
+    dnet all;
+    allow 192.168.1.0/24;
+    }
+    location /static {
+    root   /var/www/static;
+    index  index.html index.htm;
+    try_files $uri $uri/ =404;
+    }
+    error_page  404 /404.html;
+
+    location = /404.html{
+        root /var/www/errors/404.html;
+    }
+    }
+ }
+
+'''
